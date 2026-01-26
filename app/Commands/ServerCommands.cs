@@ -1,0 +1,705 @@
+using System.CommandLine;
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using CopilotInContainer.Infrastructure;
+
+namespace CopilotInContainer.Commands;
+
+/// <summary>
+/// Commands for managing GitHub Copilot CLI server instances.
+/// </summary>
+public partial class ServerCommands : ICommand
+{
+    private const string ServerStateDir = ".copilot-in-container/servers";
+    
+    private static string GetServerStateFile(string instanceName)
+    {
+        var stateDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ServerStateDir
+        );
+        Directory.CreateDirectory(stateDir);
+        return Path.Combine(stateDir, $"{instanceName}.json");
+    }
+
+    public void Configure(RootCommand rootCommand)
+    {
+        var serverCommand = new Command("server", "Manage GitHub Copilot CLI server instances");
+
+        // Start server command
+        var startCommand = new Command("start", "Start a named Copilot server instance");
+        var nameOption = new Option<string>(
+            "--name",
+            description: "Instance name (default: 'default')",
+            getDefaultValue: () => "default"
+        );
+        var portOption = new Option<int?>(
+            "--port",
+            description: "TCP port for the server (auto-assigned if not specified)"
+        );
+        var modelOption = new Option<string?>(
+            "--model",
+            description: "Default AI model for this server instance"
+        );
+        var logLevelOption = new Option<string>(
+            "--log-level",
+            description: "Log level for the server",
+            getDefaultValue: () => "info"
+        );
+        
+        startCommand.AddOption(nameOption);
+        startCommand.AddOption(portOption);
+        startCommand.AddOption(modelOption);
+        startCommand.AddOption(logLevelOption);
+        
+        startCommand.SetHandler(async (string name, int? port, string? model, string logLevel) =>
+        {
+            await StartServerAsync(name, port, model, logLevel);
+        }, nameOption, portOption, modelOption, logLevelOption);
+
+        // Stop server command
+        var stopCommand = new Command("stop", "Stop a running Copilot server instance");
+        var stopNameOption = new Option<string>(
+            "--name",
+            description: "Instance name (default: 'default')",
+            getDefaultValue: () => "default"
+        );
+        stopCommand.AddOption(stopNameOption);
+        stopCommand.SetHandler(async (string name) =>
+        {
+            await StopServerAsync(name);
+        }, stopNameOption);
+
+        // List servers command
+        var listCommand = new Command("list", "List all Copilot server instances");
+        listCommand.SetHandler(async () =>
+        {
+            await ListServersAsync();
+        });
+
+        // Connect to server command
+        var connectCommand = new Command("connect", "Connect to a running Copilot server instance");
+        var connectNameOption = new Option<string>(
+            "--name",
+            description: "Instance name (default: 'default')",
+            getDefaultValue: () => "default"
+        );
+        var promptArgument = new Argument<string[]>(
+            "prompt",
+            "Prompt to send to the server"
+        ) { Arity = ArgumentArity.ZeroOrMore };
+        
+        connectCommand.AddOption(connectNameOption);
+        connectCommand.AddArgument(promptArgument);
+        connectCommand.SetHandler(async (string name, string[] prompt) =>
+        {
+            await ConnectToServerAsync(name, prompt);
+        }, connectNameOption, promptArgument);
+
+        // Status command
+        var statusCommand = new Command("status", "Show status of a Copilot server instance");
+        var statusNameOption = new Option<string>(
+            "--name",
+            description: "Instance name (default: 'default')",
+            getDefaultValue: () => "default"
+        );
+        statusCommand.AddOption(statusNameOption);
+        statusCommand.SetHandler(async (string name) =>
+        {
+            await ShowServerStatusAsync(name);
+        }, statusNameOption);
+
+        // Logs command
+        var logsCommand = new Command("logs", "Show logs from a Copilot server instance");
+        var logsNameOption = new Option<string>(
+            "--name",
+            description: "Instance name (default: 'default')",
+            getDefaultValue: () => "default"
+        );
+        var tailOption = new Option<int?>(
+            "--tail",
+            description: "Number of lines to show from the end of the logs"
+        );
+        var followOption = new Option<bool>(
+            "--follow",
+            description: "Follow log output",
+            getDefaultValue: () => false
+        );
+        logsCommand.AddOption(logsNameOption);
+        logsCommand.AddOption(tailOption);
+        logsCommand.AddOption(followOption);
+        logsCommand.SetHandler(async (string name, int? tail, bool follow) =>
+        {
+            await ShowServerLogsAsync(name, tail, follow);
+        }, logsNameOption, tailOption, followOption);
+
+        serverCommand.AddCommand(startCommand);
+        serverCommand.AddCommand(stopCommand);
+        serverCommand.AddCommand(listCommand);
+        serverCommand.AddCommand(connectCommand);
+        serverCommand.AddCommand(statusCommand);
+        serverCommand.AddCommand(logsCommand);
+        
+        rootCommand.AddCommand(serverCommand);
+    }
+
+    private async Task StartServerAsync(string instanceName, int? port, string? model, string logLevel)
+    {
+        var stateFile = GetServerStateFile(instanceName);
+        
+        // Check if instance already exists
+        if (File.Exists(stateFile))
+        {
+            var existingState = await LoadServerStateAsync(instanceName);
+            if (existingState != null && IsContainerRunning(existingState.ContainerId))
+            {
+                ConsoleUI.PrintWarning($"Server instance '{instanceName}' is already running");
+                Console.WriteLine($"  Port: {existingState.Port}");
+                Console.WriteLine($"  Container: {existingState.ContainerId}");
+                Console.WriteLine();
+                Console.WriteLine("Use 'cic server stop --name {instanceName}' to stop it first");
+                return;
+            }
+        }
+
+        // Get current directory to mount as workspace
+        var currentDir = Directory.GetCurrentDirectory();
+        
+        ConsoleUI.PrintInfo($"Starting Copilot server instance: {instanceName}");
+        Console.WriteLine($"  Workspace folder: {currentDir}");
+        Console.WriteLine();
+
+        // Ensure config directory exists
+        var configDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".config",
+            "gh-copilot"
+        );
+        Directory.CreateDirectory(configDir);
+
+        // Get GitHub token
+        var (tokenExitCode, githubToken) = await ContainerRunner.RunCommandAsync("gh", "auth", "token");
+        if (tokenExitCode != 0 || string.IsNullOrWhiteSpace(githubToken))
+        {
+            ConsoleUI.PrintError("Failed to retrieve GitHub token");
+            return;
+        }
+
+        // Get user and group IDs
+        var userId = ContainerRunner.GetUserId();
+        var groupId = ContainerRunner.GetGroupId();
+
+        // Generate container name
+        var containerName = $"copilot-server-{instanceName}";
+
+        // Build container arguments for server mode
+        var args = new List<string>
+        {
+            "run",
+            "-d", // Detached mode
+            "-t", // Allocate pseudo-TTY to keep container running
+            "--name", containerName,
+            "--dns", "8.8.8.8",
+            "-e", $"PUID={userId}",
+            "-e", $"PGID={groupId}",
+            "-e", $"GITHUB_TOKEN={githubToken}",
+            "-v", $"{currentDir}:/workspace:rw",
+            "-v", $"{configDir}:/home/appuser/.copilot:rw",
+            "-w", "/workspace",
+            "gccli:latest",
+            "copilot",
+            "--server",
+            "--log-level", logLevel
+        };
+
+        // Add port if specified, otherwise let it auto-assign
+        if (port.HasValue)
+        {
+            args.InsertRange(args.IndexOf("-d") + 1, new[] { "-p", $"{port.Value}:{port.Value}" });
+            args.Add("--port");
+            args.Add(port.Value.ToString());
+        }
+
+        // Start container
+        var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+        
+        if (exitCode != 0)
+        {
+            ConsoleUI.PrintError("Failed to start Copilot server");
+            if (!string.IsNullOrEmpty(output))
+            {
+                Console.WriteLine("Container run error:");
+                Console.WriteLine(output);
+            }
+            else
+            {
+                Console.WriteLine("No error output received. Command was:");
+                Console.WriteLine("container " + string.Join(" ", args));
+            }
+            return;
+        }
+
+        var containerId = output.Trim();
+
+        // Wait for server to announce port
+        int? detectedPort = port;
+        if (!port.HasValue)
+        {
+            ConsoleUI.PrintInfo("Waiting for server to start...");
+            detectedPort = await WaitForServerPortAsync(containerId);
+            
+            if (!detectedPort.HasValue)
+            {
+                ConsoleUI.PrintError("Failed to detect server port");
+                await ContainerRunner.RunCommandAsync("container", "stop", containerId);
+                return;
+            }
+            
+            // Now we know the port - we need to stop the container and restart it with the port published
+            ConsoleUI.PrintInfo($"Server started on internal port {detectedPort}, reconfiguring with published port...");
+            await ContainerRunner.RunCommandAsync("container", "stop", containerId);
+            await ContainerRunner.RunCommandAsync("container", "rm", containerId);
+            
+            // Restart with the now-known port published
+            args.InsertRange(args.IndexOf("-d") + 1, new[] { "-p", $"{detectedPort.Value}:{detectedPort.Value}" });
+            args.Add("--port");
+            args.Add(detectedPort.Value.ToString());
+            
+            var (restartExitCode, restartOutput) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            if (restartExitCode != 0)
+            {
+                ConsoleUI.PrintError("Failed to restart Copilot server with published port");
+                if (!string.IsNullOrEmpty(restartOutput))
+                {
+                    Console.WriteLine("Container run error:");
+                    Console.WriteLine(restartOutput);
+                }
+                return;
+            }
+            
+            containerId = restartOutput.Trim();
+        }
+
+        // Save server state
+        var state = new ServerState
+        {
+            InstanceName = instanceName,
+            ContainerId = containerId,
+            ContainerName = containerName,
+            Port = detectedPort ?? 0,
+            Model = model,
+            LogLevel = logLevel,
+            StartedAt = DateTime.UtcNow,
+            WorkspaceFolder = currentDir
+        };
+
+        await SaveServerStateAsync(state);
+
+        ConsoleUI.PrintSuccess($"Server instance '{instanceName}' started successfully");
+        Console.WriteLine();
+        Console.WriteLine($"  Container ID: {containerId[..12]}");
+        Console.WriteLine($"  Port: {detectedPort}");
+        if (model != null)
+            Console.WriteLine($"  Model: {model}");
+        Console.WriteLine();
+        Console.WriteLine("Connect to this instance:");
+        Console.WriteLine($"  cic server connect --name {instanceName}");
+        Console.WriteLine();
+    }
+
+    private async Task<int?> WaitForServerPortAsync(string containerId)
+    {
+        var timeout = TimeSpan.FromSeconds(30);
+        var start = DateTime.UtcNow;
+
+        ConsoleUI.PrintInfo("Detecting server port from logs...");
+
+        while (DateTime.UtcNow - start < timeout)
+        {
+            // Check if container is still running using container list
+            var (statusCode, statusOutput) = await ContainerRunner.RunCommandAsync(
+                "container", 
+                "list"
+            );
+            
+            bool isRunning = false;
+            if (statusCode == 0)
+            {
+                var lines = statusOutput.Split('\n');
+                foreach (var line in lines)
+                {
+                    if (line.Contains(containerId) && line.Contains("running", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isRunning = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!isRunning)
+            {
+                ConsoleUI.PrintError("Container stopped unexpectedly");
+                // Get last logs to show error
+                var (_, errorLogs) = await ContainerRunner.RunCommandAsync("container", "logs", containerId);
+                Console.WriteLine("Last logs:");
+                Console.WriteLine(errorLogs);
+                return null;
+            }
+
+            var (exitCode, logs) = await ContainerRunner.RunCommandAsync("container", "logs", containerId);
+            
+            if (exitCode == 0 && !string.IsNullOrEmpty(logs))
+            {
+                // Look for "listening on port XXXX" in logs
+                var lines = logs.Split('\n');
+                foreach (var line in lines)
+                {
+                    // Try multiple patterns
+                    var patterns = new[]
+                    {
+                        @"listening on port (\d+)",
+                        @"Server listening on .*:(\d+)",
+                        @"port\s+(\d+)"
+                    };
+
+                    foreach (var pattern in patterns)
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(
+                            line, 
+                            pattern, 
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                        );
+                        if (match.Success && int.TryParse(match.Groups[1].Value, out var port))
+                        {
+                            ConsoleUI.PrintSuccess($"Detected port: {port}");
+                            return port;
+                        }
+                    }
+                }
+            }
+
+            await Task.Delay(500);
+        }
+
+        ConsoleUI.PrintError("Timeout waiting for port announcement");
+        return null;
+    }
+
+    private async Task StopServerAsync(string instanceName)
+    {
+        var state = await LoadServerStateAsync(instanceName);
+        
+        if (state == null)
+        {
+            ConsoleUI.PrintError($"Server instance '{instanceName}' not found");
+            Console.WriteLine();
+            Console.WriteLine("Use 'cic server list' to see available instances");
+            return;
+        }
+
+        ConsoleUI.PrintInfo($"Stopping server instance: {instanceName}");
+        
+        var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", "stop", state.ContainerId);
+        
+        if (exitCode != 0)
+        {
+            ConsoleUI.PrintError("Failed to stop server");
+            Console.WriteLine(output);
+            return;
+        }
+
+        // Remove state file
+        var stateFile = GetServerStateFile(instanceName);
+        if (File.Exists(stateFile))
+        {
+            File.Delete(stateFile);
+        }
+
+        ConsoleUI.PrintSuccess($"Server instance '{instanceName}' stopped");
+        Console.WriteLine();
+    }
+
+    private async Task ListServersAsync()
+    {
+        var stateDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ServerStateDir
+        );
+
+        if (!Directory.Exists(stateDir))
+        {
+            Console.WriteLine("No server instances found");
+            Console.WriteLine();
+            Console.WriteLine("Start a new instance:");
+            Console.WriteLine("  cic server start --name myserver");
+            return;
+        }
+
+        var stateFiles = Directory.GetFiles(stateDir, "*.json");
+        
+        if (stateFiles.Length == 0)
+        {
+            Console.WriteLine("No server instances found");
+            Console.WriteLine();
+            Console.WriteLine("Start a new instance:");
+            Console.WriteLine("  cic server start --name myserver");
+            return;
+        }
+
+        Console.WriteLine("Copilot Server Instances:");
+        Console.WriteLine();
+        Console.WriteLine("NAME              STATUS     PORT    UPTIME          WORKSPACE");
+        Console.WriteLine("────────────────  ─────────  ──────  ──────────────  ────────────────────────────────────────");
+
+        foreach (var stateFile in stateFiles)
+        {
+            var instanceName = Path.GetFileNameWithoutExtension(stateFile);
+            var state = await LoadServerStateAsync(instanceName);
+            
+            if (state == null) continue;
+
+            var isRunning = IsContainerRunning(state.ContainerId);
+            var status = isRunning ? "Running" : "Stopped";
+            var uptime = isRunning ? GetUptime(state.StartedAt) : "-";
+            var workspace = state.WorkspaceFolder ?? "-";
+            
+            // Shorten workspace path if it's in home directory
+            if (workspace.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)))
+            {
+                workspace = "~" + workspace.Substring(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).Length);
+            }
+
+            Console.WriteLine(
+                $"{instanceName,-16}  {status,-9}  {state.Port,-6}  {uptime,-14}  {workspace}"
+            );
+        }
+
+        Console.WriteLine();
+    }
+
+    private async Task ConnectToServerAsync(string instanceName, string[] prompt)
+    {
+        var state = await LoadServerStateAsync(instanceName);
+        
+        if (state == null)
+        {
+            ConsoleUI.PrintError($"Server instance '{instanceName}' not found");
+            Console.WriteLine();
+            Console.WriteLine("Use 'cic server list' to see available instances");
+            return;
+        }
+
+        if (!IsContainerRunning(state.ContainerId))
+        {
+            ConsoleUI.PrintError($"Server instance '{instanceName}' is not running");
+            Console.WriteLine();
+            Console.WriteLine($"Start it with: cic server start --name {instanceName}");
+            return;
+        }
+
+        ConsoleUI.PrintInfo($"Connecting to server instance: {instanceName}");
+        Console.WriteLine();
+
+        // Get current directory for workspace context
+        var currentDir = Directory.GetCurrentDirectory();
+
+        // Execute copilot CLI to connect to the server
+        var args = new List<string>
+        {
+            "exec",
+            "-it",
+            "-w", "/workspace",
+            state.ContainerId,
+            "copilot"
+        };
+
+        // Add prompt if provided
+        if (prompt.Length > 0)
+        {
+            args.AddRange(prompt);
+        }
+
+        // Run the command interactively
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "container",
+            UseShellExecute = false
+        };
+        
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        var process = new Process { StartInfo = startInfo };
+        process.Start();
+        await process.WaitForExitAsync();
+    }
+
+    private async Task ShowServerStatusAsync(string instanceName)
+    {
+        var state = await LoadServerStateAsync(instanceName);
+        
+        if (state == null)
+        {
+            ConsoleUI.PrintError($"Server instance '{instanceName}' not found");
+            return;
+        }
+
+        var isRunning = IsContainerRunning(state.ContainerId);
+
+        Console.WriteLine($"Server Instance: {instanceName}");
+        Console.WriteLine();
+        Console.WriteLine($"  Status: {(isRunning ? "Running" : "Stopped")}");
+        Console.WriteLine($"  Container ID: {state.ContainerId[..12]}");
+        Console.WriteLine($"  Container Name: {state.ContainerName}");
+        Console.WriteLine($"  Port: {state.Port}");
+        Console.WriteLine($"  Workspace: {state.WorkspaceFolder}");
+        Console.WriteLine($"  Log Level: {state.LogLevel}");
+        if (state.Model != null)
+            Console.WriteLine($"  Model: {state.Model}");
+        Console.WriteLine($"  Started: {state.StartedAt:yyyy-MM-dd HH:mm:ss} UTC");
+        if (isRunning)
+            Console.WriteLine($"  Uptime: {GetUptime(state.StartedAt)}");
+        Console.WriteLine();
+    }
+
+    private async Task ShowServerLogsAsync(string instanceName, int? tail, bool follow)
+    {
+        var state = await LoadServerStateAsync(instanceName);
+        
+        if (state == null)
+        {
+            ConsoleUI.PrintError($"Server instance '{instanceName}' not found");
+            return;
+        }
+
+        var args = new List<string> { "logs" };
+        
+        if (tail.HasValue)
+        {
+            args.Add("--tail");
+            args.Add(tail.Value.ToString());
+        }
+        
+        if (follow)
+        {
+            args.Add("--follow");
+        }
+        
+        args.Add(state.ContainerId);
+
+        if (follow)
+        {
+            // Run interactively for follow mode
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "container",
+                UseShellExecute = false
+            };
+            
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
+
+            var process = new Process { StartInfo = startInfo };
+            process.Start();
+            await process.WaitForExitAsync();
+        }
+        else
+        {
+            // Get logs and display
+            var (exitCode, logs) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            
+            if (exitCode != 0)
+            {
+                ConsoleUI.PrintError("Failed to get logs");
+                return;
+            }
+
+            Console.WriteLine(logs);
+        }
+    }
+
+    private bool IsContainerRunning(string containerId)
+    {
+        // Apple container doesn't support --format flag, use list instead
+        var (exitCode, output) = ContainerRunner.RunCommand(
+            "container", 
+            "list"
+        );
+        
+        if (exitCode != 0) return false;
+        
+        // Check if container ID or name appears in list output with "running" status
+        var lines = output.Split('\n');
+        foreach (var line in lines)
+        {
+            if ((line.Contains(containerId) || line.Contains($"copilot-server-")) && 
+                line.Contains("running", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    private string GetUptime(DateTime startedAt)
+    {
+        var uptime = DateTime.UtcNow - startedAt;
+        
+        if (uptime.TotalDays >= 1)
+            return $"{(int)uptime.TotalDays}d {uptime.Hours}h";
+        if (uptime.TotalHours >= 1)
+            return $"{(int)uptime.TotalHours}h {uptime.Minutes}m";
+        if (uptime.TotalMinutes >= 1)
+            return $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
+        return $"{(int)uptime.TotalSeconds}s";
+    }
+
+    private async Task<ServerState?> LoadServerStateAsync(string instanceName)
+    {
+        var stateFile = GetServerStateFile(instanceName);
+        
+        if (!File.Exists(stateFile))
+            return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(stateFile);
+            return JsonSerializer.Deserialize(json, ServerStateJsonContext.Default.ServerState);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task SaveServerStateAsync(ServerState state)
+    {
+        var stateFile = GetServerStateFile(state.InstanceName);
+        var json = JsonSerializer.Serialize(state, ServerStateJsonContext.Default.ServerState);
+        await File.WriteAllTextAsync(stateFile, json);
+    }
+}
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(ServerState))]
+internal partial class ServerStateJsonContext : JsonSerializerContext
+{
+}
+
+internal class ServerState
+{
+    public string InstanceName { get; set; } = "";
+    public string ContainerId { get; set; } = "";
+    public string ContainerName { get; set; } = "";
+    public int Port { get; set; }
+    public string? Model { get; set; }
+    public string LogLevel { get; set; } = "info";
+    public DateTime StartedAt { get; set; }
+    public string WorkspaceFolder { get; set; } = "";
+}

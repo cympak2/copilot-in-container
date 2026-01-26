@@ -1,0 +1,19 @@
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build artifacts
+*.log
+
+# Temporary files
+tmp/
+temp/
+copilot_tmp/
+app/bin/
+app/obj/
+example_sdk_app/bin/
+example_sdk_app/obj/
+cic
