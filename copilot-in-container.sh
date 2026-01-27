@@ -6,7 +6,7 @@ set -e
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BINARY_PATH="$SCRIPT_DIR/app/bin/Debug/net10.0/copilot-in-container"
+BINARY_PATH="$SCRIPT_DIR/app/bin/Release/net10.0/copilot-in-container"
 
 # Check if binary exists
 if [ ! -f "$BINARY_PATH" ]; then

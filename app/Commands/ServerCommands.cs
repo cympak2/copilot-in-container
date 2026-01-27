@@ -85,17 +85,23 @@ public partial class ServerCommands : ICommand
             description: "Instance name (default: 'default')",
             getDefaultValue: () => "default"
         );
+        var noTtyOption = new Option<bool>(
+            "--no-tty",
+            description: "Run without interactive terminal (for non-interactive use)",
+            getDefaultValue: () => false
+        );
         var promptArgument = new Argument<string[]>(
             "prompt",
             "Prompt to send to the server"
         ) { Arity = ArgumentArity.ZeroOrMore };
         
         connectCommand.AddOption(connectNameOption);
+        connectCommand.AddOption(noTtyOption);
         connectCommand.AddArgument(promptArgument);
-        connectCommand.SetHandler(async (string name, string[] prompt) =>
+        connectCommand.SetHandler(async (string name, bool noTty, string[] prompt) =>
         {
-            await ConnectToServerAsync(name, prompt);
-        }, connectNameOption, promptArgument);
+            await ConnectToServerAsync(name, noTty, prompt);
+        }, connectNameOption, noTtyOption, promptArgument);
 
         // Status command
         var statusCommand = new Command("status", "Show status of a Copilot server instance");
@@ -478,7 +484,7 @@ public partial class ServerCommands : ICommand
         Console.WriteLine();
     }
 
-    private async Task ConnectToServerAsync(string instanceName, string[] prompt)
+    private async Task ConnectToServerAsync(string instanceName, bool noTty, string[] prompt)
     {
         var state = await LoadServerStateAsync(instanceName);
         
@@ -498,8 +504,11 @@ public partial class ServerCommands : ICommand
             return;
         }
 
-        ConsoleUI.PrintInfo($"Connecting to server instance: {instanceName}");
-        Console.WriteLine();
+        if (!noTty)
+        {
+            ConsoleUI.PrintInfo($"Connecting to server instance: {instanceName}");
+            Console.WriteLine();
+        }
 
         // Get current directory for workspace context
         var currentDir = Directory.GetCurrentDirectory();
@@ -507,34 +516,70 @@ public partial class ServerCommands : ICommand
         // Execute copilot CLI to connect to the server
         var args = new List<string>
         {
-            "exec",
-            "-it",
-            "-w", "/workspace",
-            state.ContainerId,
-            "copilot"
+            "exec"
         };
+        
+        // Only add -it for interactive mode
+        if (!noTty)
+        {
+            args.Add("-it");
+        }
+        
+        args.AddRange(new[] { "-w", "/workspace", state.ContainerId, "copilot" });
 
         // Add prompt if provided
         if (prompt.Length > 0)
         {
-            args.AddRange(prompt);
+            if (noTty)
+            {
+                // For non-interactive mode, use -p/--prompt flag
+                args.Add("-p");
+                args.Add(string.Join(" ", prompt));
+            }
+            else
+            {
+                // For interactive mode, pass arguments directly
+                args.AddRange(prompt);
+            }
         }
 
-        // Run the command interactively
-        var startInfo = new ProcessStartInfo
+        // Run the command
+        if (noTty)
         {
-            FileName = "container",
-            UseShellExecute = false
-        };
-        
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
+            // For non-interactive mode, capture output
+            var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            
+            if (exitCode != 0)
+            {
+                ConsoleUI.PrintError("Failed to execute command");
+                if (!string.IsNullOrEmpty(output))
+                {
+                    Console.WriteLine(output);
+                }
+            }
+            else
+            {
+                Console.WriteLine(output);
+            }
         }
+        else
+        {
+            // For interactive mode, run interactively
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "container",
+                UseShellExecute = false
+            };
+            
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
 
-        var process = new Process { StartInfo = startInfo };
-        process.Start();
-        await process.WaitForExitAsync();
+            var process = new Process { StartInfo = startInfo };
+            process.Start();
+            await process.WaitForExitAsync();
+        }
     }
 
     private async Task ShowServerStatusAsync(string instanceName)
