@@ -13,7 +13,7 @@ public class ModelCommands : ICommand
     private const string GlobalConfigDir = ".config/copilot-in-container";
     private const string ModelConfigFile = "model.conf";
     private const string DefaultKeyword = "default";
-    private const string ImageName = "gccli:latest";
+    private const string ImageName = "copilot-in-container:latest";
 
     public void Configure(RootCommand root)
     {

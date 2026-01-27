@@ -9,7 +9,7 @@ This is an example .NET application that demonstrates how to connect to a GitHub
 First, start a server using cic:
 
 ```bash
-cd /Users/Stanislav_Antonichev/my_projects/gcclicontainer
+cd copilot-in-container
 ./cic server start --name myserver
 ./cic server list  # Note the port number
 ```

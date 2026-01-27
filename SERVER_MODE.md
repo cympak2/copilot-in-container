@@ -232,7 +232,7 @@ container run -d \
   --name copilot-server-<instance> \
   -e GITHUB_TOKEN=... \
   -v ~/.config/gh-copilot:/home/appuser/.copilot:rw \
-  gccli:latest \
+  copilot-in-container:latest \
   copilot --server --log-level info --port 3000
 ```
 
@@ -259,7 +259,7 @@ cic server stop --name conflicting-name
 
 **Verify container image:**
 ```bash
-container image ls | grep gccli
+container image ls | grep copilot-in-container
 ./build.sh  # If image missing
 ```
 

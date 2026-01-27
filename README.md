@@ -126,19 +126,21 @@ The `copilot-in-container` (or `cic`) script:
 
 1. Checks for required dependencies (Apple container, GitHub CLI)
 2. Validates your GitHub token has the necessary scopes
-3. Pulls the latest container image (unless `--no-pull` is specified)
+3. Automatically downloads the container image from GitHub Container Registry if not found locally
 4. Mounts your current directory into the container
 5. Passes your GitHub authentication to the container
 6. Runs the GitHub Copilot CLI in an isolated Apple container
 
 In **server mode**, the CLI runs as a persistent background process that you can connect to multiple times without restart overhead.
 
-## 🏗️ Building the Image
+## 🏗️ Building the Image (Optional)
 
-To build the container image yourself:
+The container image is automatically downloaded from GitHub Container Registry (`ghcr.io/cympak2/copilot-in-container:latest`) when you run the CLI.
+
+However, if you want to build the image locally (for development or customization):
 
 ```bash
-container build -t gccli:latest -f Dockerfile .
+container build -t ghcr.io/cympak2/copilot-in-container:latest -f Dockerfile .
 ```
 
 ## 🔒 Security

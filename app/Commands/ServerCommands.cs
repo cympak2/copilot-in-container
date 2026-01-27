@@ -213,7 +213,7 @@ public partial class ServerCommands : ICommand
             "-v", $"{currentDir}:/workspace:rw",
             "-v", $"{configDir}:/home/appuser/.copilot:rw",
             "-w", "/workspace",
-            "gccli:latest",
+            "copilot-in-container:latest",
             "copilot",
             "--server",
             "--log-level", logLevel

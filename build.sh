@@ -3,7 +3,7 @@
 
 set -e
 
-readonly IMAGE_NAME="gccli:latest"
+readonly IMAGE_NAME="copilot-in-container:latest"
 readonly GREEN='\033[0;32m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'

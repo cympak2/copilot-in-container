@@ -224,7 +224,7 @@ main() {
     echo ""
     echo "3. Build the container image:"
     echo "   cd $(dirname "$0")"
-    echo "   container build -t gccli:latest ."
+    echo "   container build -t copilot-in-container:latest ."
     echo ""
     echo "4. Start using copilot-in-container:"
     echo "   copilot-in-container"

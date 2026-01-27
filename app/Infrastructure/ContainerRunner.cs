@@ -8,7 +8,7 @@ namespace CopilotInContainer.Infrastructure;
 /// </summary>
 public static class ContainerRunner
 {
-    private const string ImageName = "gccli:latest";
+    private const string ImageName = "ghcr.io/cympak2/copilot-in-container:latest";
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".config",
@@ -44,14 +44,27 @@ public static class ContainerRunner
             }
         }
 
-        ConsoleUI.PrintError("Image not found");
+        ConsoleUI.PrintWarning("Image not found locally. Pulling from registry...");
         Console.WriteLine();
-        Console.WriteLine("Build the image first with:");
-        Console.WriteLine("  ./build.sh");
-        Console.WriteLine();
-        Console.WriteLine("Or manually:");
-        Console.WriteLine($"  container build -t {ImageName} .");
-        return false;
+        
+        // Pull the image
+        ConsoleUI.PrintInfo($"Pulling image: {ImageName}");
+        var (pullExitCode, pullOutput) = RunCommand("container", "image", "pull", ImageName);
+        
+        if (pullExitCode != 0)
+        {
+            ConsoleUI.PrintError("Failed to pull image");
+            Console.WriteLine();
+            Console.WriteLine("You can build the image locally with:");
+            Console.WriteLine("  ./build.sh");
+            Console.WriteLine();
+            Console.WriteLine("Or manually:");
+            Console.WriteLine($"  container build -t {ImageName} .");
+            return false;
+        }
+        
+        ConsoleUI.PrintSuccess("Image pulled successfully");
+        return true;
     }
 
     public static async Task<int> RunAsync(string[] promptArgs, string? sessionModel = null, string? agent = null)

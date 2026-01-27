@@ -80,7 +80,7 @@ source ~/.zshrc
 ./build.sh
 
 # Or manually
-container build -t gccli:latest .
+container build -t copilot-in-container:latest .
 ```
 
 This will:
