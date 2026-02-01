@@ -74,7 +74,8 @@ public class AppleContainerRuntime : IContainerRuntime
         bool interactive = true,
         bool removeOnExit = true,
         Dictionary<string, string>? ports = null,
-        bool detached = false)
+        bool detached = false,
+        string? platform = null)
     {
         var args = new List<string> { "run" };
 
@@ -170,8 +171,8 @@ public class AppleContainerRuntime : IContainerRuntime
         {
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && parts[0] == imgName && parts[1] == imgTag)
-            {
-                return true;
+                {
+                    return true;
             }
         }
 

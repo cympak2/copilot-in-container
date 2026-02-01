@@ -42,7 +42,8 @@ public interface IContainerRuntime
         bool interactive = true,
         bool removeOnExit = true,
         Dictionary<string, string>? ports = null,
-        bool detached = false
+        bool detached = false,
+        string? platform = null
     );
     
     /// <summary>

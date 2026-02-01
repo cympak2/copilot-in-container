@@ -74,7 +74,8 @@ public class DockerRuntime : IContainerRuntime
         bool interactive = true,
         bool removeOnExit = true,
         Dictionary<string, string>? ports = null,
-        bool detached = false)
+        bool detached = false,
+        string? platform = null)
     {
         var args = new List<string> { "run" };
 
@@ -127,6 +128,13 @@ public class DockerRuntime : IContainerRuntime
         // Add working directory
         args.Add("-w");
         args.Add(workingDirectory);
+
+        // Add platform if specified
+        if (!string.IsNullOrEmpty(platform))
+        {
+            args.Add("--platform");
+            args.Add(platform);
+        }
 
         // Add image name
         args.Add(imageName);

@@ -215,7 +215,7 @@ public static class ContainerRunner
         // Run the container
         Console.WriteLine("🚀 Starting GitHub Copilot CLI...");
         Console.WriteLine();
-
+        
         return RunInteractive(runtime.CommandName, args.ToArray());
     }
 
