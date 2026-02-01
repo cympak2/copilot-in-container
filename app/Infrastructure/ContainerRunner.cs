@@ -4,7 +4,7 @@ using CopilotInContainer.Commands;
 namespace CopilotInContainer.Infrastructure;
 
 /// <summary>
-/// Handles running containers with Apple container runtime.
+/// Handles running containers with various container runtimes.
 /// </summary>
 public static class ContainerRunner
 {
@@ -14,34 +14,85 @@ public static class ContainerRunner
         ".config",
         "gh-copilot"
     );
+    
+    private static readonly string RuntimeConfigPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".config",
+        "copilot-in-container",
+        "runtime"
+    );
+    
+    private static IContainerRuntime? _runtime;
+    
+    /// <summary>
+    /// Gets the configured container runtime, or auto-detects if not configured.
+    /// </summary>
+    public static IContainerRuntime GetRuntime()
+    {
+        if (_runtime != null)
+            return _runtime;
+            
+        // Try to load from config
+        var configuredRuntime = ConfigFile.ReadValue(RuntimeConfigPath);
+        
+        if (!string.IsNullOrEmpty(configuredRuntime))
+        {
+            _runtime = configuredRuntime.ToLowerInvariant() switch
+            {
+                "docker" => new DockerRuntime(),
+                "container" => new AppleContainerRuntime(),
+                _ => null
+            };
+            
+            if (_runtime?.IsAvailable() == true)
+                return _runtime;
+        }
+        
+        // Auto-detect: prefer Apple Container on macOS, Docker otherwise
+        var appleContainer = new AppleContainerRuntime();
+        if (appleContainer.IsAvailable())
+        {
+            _runtime = appleContainer;
+            return _runtime;
+        }
+        
+        var docker = new DockerRuntime();
+        if (docker.IsAvailable())
+        {
+            _runtime = docker;
+            return _runtime;
+        }
+        
+        // Fallback to Docker (will fail later with proper error)
+        _runtime = new DockerRuntime();
+        return _runtime;
+    }
+    
+    /// <summary>
+    /// Sets the container runtime to use.
+    /// </summary>
+    public static void SetRuntime(string runtimeName)
+    {
+        ConfigFile.WriteValue(RuntimeConfigPath, runtimeName);
+        _runtime = null; // Force reload
+    }
 
     public static bool CheckImage()
     {
+        var runtime = GetRuntime();
+        
         ConsoleUI.PrintInfo($"Checking for image: {ImageName}");
 
-        var (exitCode, output) = RunCommand("container", "image", "ls");
-
-        if (exitCode != 0)
+        if (!runtime.IsAvailable())
         {
-            ConsoleUI.PrintError("Failed to list container images");
+            ConsoleUI.PrintError($"{runtime.DisplayName} is not available");
             return false;
         }
 
-        // Parse output to check if image exists
-        // Format: REPOSITORY TAG IMAGE_ID CREATED SIZE
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var imageParts = ImageName.Split(':');
-        var imgName = imageParts[0];
-        var imgTag = imageParts.Length > 1 ? imageParts[1] : "latest";
-
-        foreach (var line in lines.Skip(1)) // Skip header
+        if (runtime.CheckImageExists(ImageName))
         {
-            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[0] == imgName && parts[1] == imgTag)
-            {
-                ConsoleUI.PrintSuccess("Image found locally");
-                return true;
-            }
+            ConsoleUI.PrintSuccess("Image found locally");
+            return true;
         }
 
         ConsoleUI.PrintWarning("Image not found locally. Pulling from registry...");
@@ -49,7 +100,7 @@ public static class ContainerRunner
         
         // Pull the image
         ConsoleUI.PrintInfo($"Pulling image: {ImageName}");
-        var (pullExitCode, pullOutput) = RunCommand("container", "image", "pull", ImageName);
+        var (pullExitCode, pullOutput) = runtime.PullImage(ImageName);
         
         if (pullExitCode != 0)
         {
@@ -59,7 +110,7 @@ public static class ContainerRunner
             Console.WriteLine("  ./build.sh");
             Console.WriteLine();
             Console.WriteLine("Or manually:");
-            Console.WriteLine($"  container build -t {ImageName} .");
+            Console.WriteLine($"  {runtime.CommandName} build -t {ImageName} .");
             return false;
         }
         
@@ -69,6 +120,8 @@ public static class ContainerRunner
 
     public static async Task<int> RunAsync(string[] promptArgs, string? sessionModel = null, string? agent = null)
     {
+        var runtime = GetRuntime();
+        
         // Ensure config directory exists
         Directory.CreateDirectory(ConfigDir);
 
@@ -90,22 +143,31 @@ public static class ContainerRunner
         // Generate unique container name
         var containerName = $"copilot-in-container-{Guid.NewGuid():N}";
 
-        // Build container arguments
-        var args = new List<string>
+        // Build environment variables
+        var envVars = new Dictionary<string, string>
         {
-            "run",
-            "--rm",
-            "--name", containerName,
-            "-it",
-            "--dns", "8.8.8.8",
-            "-e", $"PUID={userId}",
-            "-e", $"PGID={groupId}",
-            "-e", $"GITHUB_TOKEN={githubToken}",
-            "-v", $"{currentDir}:/workspace:rw",
-            "-v", $"{ConfigDir}:/home/appuser/.copilot:rw",
-            "-w", "/workspace",
-            ImageName
+            { "PUID", userId },
+            { "PGID", groupId },
+            { "GITHUB_TOKEN", githubToken }
         };
+
+        // Build volumes
+        var volumes = new Dictionary<string, string>
+        {
+            { currentDir, "/workspace:rw" },
+            { ConfigDir, "/home/appuser/.copilot:rw" }
+        };
+
+        // Build container arguments
+        var args = runtime.BuildRunArguments(
+            ImageName,
+            containerName,
+            envVars,
+            volumes,
+            "/workspace",
+            interactive: true,
+            removeOnExit: true
+        );
 
         // Add copilot command if needed
         bool copilotAdded = false;
@@ -154,7 +216,7 @@ public static class ContainerRunner
         Console.WriteLine("🚀 Starting GitHub Copilot CLI...");
         Console.WriteLine();
 
-        return RunInteractive("container", args.ToArray());
+        return RunInteractive(runtime.CommandName, args.ToArray());
     }
 
     public static string GetUserId()

@@ -1,12 +1,13 @@
-# copilot-in-container: GitHub Copilot CLI in Apple Container
+# copilot-in-container: GitHub Copilot CLI in Container
 
-Run the GitHub Copilot CLI in a secure, sandboxed Apple container on macOS. This tool provides a lightweight wrapper around Apple's `container` tool to run GitHub Copilot CLI in isolation.
+Run the GitHub Copilot CLI in a secure, sandboxed container on macOS and other platforms. This tool provides a lightweight wrapper to run GitHub Copilot CLI in isolation using either Apple Container or Docker.
 
 ## 🚀 What is this?
 
-This project provides a simple way to run [GitHub Copilot CLI](https://github.com/features/copilot/cli) in an Apple container, giving you:
+This project provides a simple way to run [GitHub Copilot CLI](https://github.com/features/copilot/cli) in a container, giving you:
 
-- **Security**: Isolated environment using Apple's container technology
+- **Security**: Isolated environment using container technology
+- **Flexibility**: Support for both Apple Container and Docker
 - **Clean system**: No global Node.js installation needed
 - **Automatic authentication**: Uses your existing `gh` CLI credentials
 - **File system access**: Only mounts the current directory you're working in
@@ -16,9 +17,19 @@ This project provides a simple way to run [GitHub Copilot CLI](https://github.co
 
 Before you start, ensure you have:
 
-- A Mac with Apple silicon (required for Apple container)
-- macOS 15 or later
-- [Apple container](https://github.com/apple/container) installed
+### Container Runtime (choose one)
+
+- **Apple Container** (recommended for Apple Silicon Macs):
+  - Mac with Apple silicon
+  - macOS 15 or later
+  - [Apple container](https://github.com/apple/container) installed
+  
+- **Docker** (cross-platform):
+  - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed
+  - Works on macOS (Intel or Apple Silicon), Linux, and Windows
+
+### GitHub CLI
+
 - The [GitHub CLI (gh)](https://cli.github.com/) installed and authenticated
 - Your GitHub token must have the `copilot` and `read:packages` scopes
 
@@ -41,6 +52,8 @@ gh auth refresh -h github.com -s copilot,read:packages
 curl -fsSL https://raw.githubusercontent.com/yourusername/copilot-in-container/main/install.sh | bash
 ```
 
+During installation, you'll be asked to choose your preferred container runtime if both are available.
+
 ### Manual Install
 
 1. Download the script:
@@ -56,6 +69,37 @@ source ~/.copilot-in-container.sh
 3. Reload your shell:
 ```bash
 source ~/.zshrc  # or source ~/.bashrc
+```
+
+4. Set your preferred runtime:
+```bash
+cic runtime set --runtime docker
+# or
+cic runtime set --runtime container
+```
+
+## 🔧 Runtime Management
+
+### Check current runtime
+
+```bash
+cic runtime show
+```
+
+### List available runtimes
+
+```bash
+cic runtime list
+```
+
+### Switch runtime
+
+```bash
+# Switch to Docker
+cic runtime set --runtime docker
+
+# Switch to Apple Container
+cic runtime set --runtime container
 ```
 
 ## 📖 Usage

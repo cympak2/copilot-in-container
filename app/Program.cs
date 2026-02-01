@@ -25,6 +25,10 @@ class Program
         var serverCommands = new ServerCommands();
         serverCommands.Configure(rootCommand);
 
+        // Register runtime management commands
+        var runtimeCommands = new RuntimeCommands();
+        runtimeCommands.Configure(rootCommand);
+
         var noPullOption = new Option<bool>(
             "--no-pull",
             "Skip pulling the latest image"

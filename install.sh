@@ -162,17 +162,32 @@ check_prerequisites() {
     print_header "Checking Prerequisites"
     
     local all_ok=true
+    local has_container=false
+    local has_docker=false
     
     # Check for Apple container
     if command -v container >/dev/null 2>&1; then
         local version
         version=$(container --version 2>&1 | head -n1 || echo "unknown")
         print_success "Apple container: $version"
-    else
-        print_error "Apple container not found"
+        has_container=true
+    fi
+    
+    # Check for Docker
+    if command -v docker >/dev/null 2>&1; then
+        local docker_version
+        docker_version=$(docker --version 2>&1 || echo "unknown")
+        print_success "Docker: $docker_version"
+        has_docker=true
+    fi
+    
+    # Ensure at least one container runtime is available
+    if [ "$has_container" = false ] && [ "$has_docker" = false ]; then
+        print_error "No container runtime found"
         echo ""
-        echo "Install from: https://github.com/apple/container/releases"
-        echo "Requires: macOS 15+"
+        echo "Install one of the following:"
+        echo "  - Apple container: https://github.com/apple/container/releases (macOS 26+)"
+        echo "  - Docker: https://docs.docker.com/get-docker/"
         all_ok=false
     fi
     
@@ -194,6 +209,60 @@ check_prerequisites() {
         print_error "Please install missing prerequisites and run again"
         exit 1
     fi
+    
+    # Return available runtimes for later selection
+    echo "$has_container:$has_docker"
+}
+
+# Select container runtime
+select_runtime() {
+    local has_container="$1"
+    local has_docker="$2"
+    
+    # If both are available, ask user
+    if [ "$has_container" = true ] && [ "$has_docker" = true ]; then
+        print_header "Select Container Runtime"
+        echo ""
+        echo "Both Apple Container and Docker are available."
+        echo "Which one would you like to use?"
+        echo ""
+        echo "  1) Apple Container (native macOS runtime)"
+        echo "  2) Docker"
+        echo ""
+        
+        while true; do
+            read -p "Enter choice [1-2]: " choice
+            case $choice in
+                1)
+                    echo "container"
+                    return
+                    ;;
+                2)
+                    echo "docker"
+                    return
+                    ;;
+                *)
+                    print_error "Invalid choice. Please enter 1 or 2."
+                    ;;
+            esac
+        done
+    elif [ "$has_container" = true ]; then
+        echo "container"
+    elif [ "$has_docker" = true ]; then
+        echo "docker"
+    fi
+}
+
+# Save runtime configuration
+save_runtime_config() {
+    local runtime="$1"
+    local config_dir="$HOME/.config/copilot-in-container"
+    local config_file="$config_dir/runtime"
+    
+    mkdir -p "$config_dir"
+    echo "$runtime" > "$config_file"
+    
+    print_success "Runtime preference saved: $runtime"
 }
 
 # Main installation
@@ -202,17 +271,36 @@ main() {
     echo "╔════════════════════════════════════════════════════════╗"
     echo "║                                                        ║"
     echo "║       copilot-in-container Installation               ║"
-    echo "║       GitHub Copilot CLI in Apple Container           ║"
+    echo "║       GitHub Copilot CLI in Container                 ║"
     echo "║                                                        ║"
     echo "╚════════════════════════════════════════════════════════╝"
     
     check_platform
-    check_prerequisites
+    
+    local runtime_info
+    runtime_info=$(check_prerequisites)
+    local has_container=$(echo "$runtime_info" | cut -d: -f1)
+    local has_docker=$(echo "$runtime_info" | cut -d: -f2)
+    
+    local selected_runtime
+    selected_runtime=$(select_runtime "$has_container" "$has_docker")
+    
+    save_runtime_config "$selected_runtime"
+    
     download_script
     update_shell_config
     
     print_header "Installation Complete"
     
+    local runtime_display
+    if [ "$selected_runtime" = "container" ]; then
+        runtime_display="Apple Container"
+    else
+        runtime_display="Docker"
+    fi
+    
+    echo "Container Runtime: $runtime_display"
+    echo ""
     echo "Next steps:"
     echo ""
     echo "1. Reload your shell:"
@@ -224,7 +312,7 @@ main() {
     echo ""
     echo "3. Build the container image:"
     echo "   cd $(dirname "$0")"
-    echo "   container build -t copilot-in-container:latest ."
+    echo "   $selected_runtime build -t copilot-in-container:latest ."
     echo ""
     echo "4. Start using copilot-in-container:"
     echo "   copilot-in-container"

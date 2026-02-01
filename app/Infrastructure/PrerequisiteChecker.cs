@@ -9,18 +9,28 @@ public static class PrerequisiteChecker
 {
     public static bool CheckContainer()
     {
-        if (!CommandExists("container"))
+        var runtime = ContainerRunner.GetRuntime();
+        
+        if (!runtime.IsAvailable())
         {
-            ConsoleUI.PrintError("Apple container is not installed");
+            ConsoleUI.PrintError($"{runtime.DisplayName} is not installed or not available");
             Console.WriteLine();
-            Console.WriteLine("Please install Apple container from:");
+            Console.WriteLine("Please install one of the following:");
+            Console.WriteLine();
+            Console.WriteLine("Apple Container:");
             Console.WriteLine("  https://github.com/apple/container/releases");
+            Console.WriteLine("  Required: macOS 15+ with Apple silicon");
             Console.WriteLine();
-            Console.WriteLine("Required: macOS 15+ with Apple silicon");
+            Console.WriteLine("Docker:");
+            Console.WriteLine("  https://docs.docker.com/get-docker/");
+            Console.WriteLine();
+            Console.WriteLine("After installation, you can set your preference:");
+            Console.WriteLine("  cic runtime set --runtime docker");
+            Console.WriteLine("  cic runtime set --runtime container");
             return false;
         }
 
-        ConsoleUI.PrintSuccess("Apple container found");
+        ConsoleUI.PrintSuccess($"{runtime.DisplayName} found: {runtime.GetVersion()}");
         return true;
     }
 

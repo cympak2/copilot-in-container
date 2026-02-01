@@ -192,43 +192,69 @@ public partial class ServerCommands : ICommand
             return;
         }
 
+        // Get runtime
+        var runtime = ContainerRunner.GetRuntime();
+        
         // Get user and group IDs
         var userId = ContainerRunner.GetUserId();
         var groupId = ContainerRunner.GetGroupId();
 
         // Generate container name
         var containerName = $"copilot-server-{instanceName}";
-
-        // Build container arguments for server mode
-        var args = new List<string>
+        
+        // Build environment variables
+        var envVars = new Dictionary<string, string>
         {
-            "run",
-            "-d", // Detached mode
-            "-t", // Allocate pseudo-TTY to keep container running
-            "--name", containerName,
-            "--dns", "8.8.8.8",
-            "-e", $"PUID={userId}",
-            "-e", $"PGID={groupId}",
-            "-e", $"GITHUB_TOKEN={githubToken}",
-            "-v", $"{currentDir}:/workspace:rw",
-            "-v", $"{configDir}:/home/appuser/.copilot:rw",
-            "-w", "/workspace",
-            "copilot-in-container:latest",
-            "copilot",
-            "--server",
-            "--log-level", logLevel
+            { "PUID", userId },
+            { "PGID", groupId },
+            { "GITHUB_TOKEN", githubToken }
         };
-
-        // Add port if specified, otherwise let it auto-assign
+        
+        // Build volumes
+        var volumes = new Dictionary<string, string>
+        {
+            { currentDir, "/workspace:rw" },
+            { configDir, "/home/appuser/.copilot:rw" }
+        };
+        
+        // Build ports if specified
+        Dictionary<string, string>? ports = null;
         if (port.HasValue)
         {
-            args.InsertRange(args.IndexOf("-d") + 1, new[] { "-p", $"{port.Value}:{port.Value}" });
+            ports = new Dictionary<string, string>
+            {
+                { port.Value.ToString(), port.Value.ToString() }
+            };
+        }
+
+        // Build container arguments for server mode
+        var args = runtime.BuildRunArguments(
+            "copilot-in-container:latest",
+            containerName,
+            envVars,
+            volumes,
+            "/workspace",
+            interactive: false,
+            removeOnExit: false,
+            ports: ports,
+            detached: true
+        );
+        
+        // Add copilot command and arguments
+        args.Add("copilot");
+        args.Add("--server");
+        args.Add("--log-level");
+        args.Add(logLevel);
+        
+        // Add port if specified
+        if (port.HasValue)
+        {
             args.Add("--port");
             args.Add(port.Value.ToString());
         }
 
         // Start container
-        var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+        var (exitCode, output) = await ContainerRunner.RunCommandAsync(runtime.CommandName, args.ToArray());
         
         if (exitCode != 0)
         {
@@ -258,21 +284,41 @@ public partial class ServerCommands : ICommand
             if (!detectedPort.HasValue)
             {
                 ConsoleUI.PrintError("Failed to detect server port");
-                await ContainerRunner.RunCommandAsync("container", "stop", containerId);
+                await ContainerRunner.RunCommandAsync(runtime.CommandName, "stop", containerId);
                 return;
             }
             
             // Now we know the port - we need to stop the container and restart it with the port published
             ConsoleUI.PrintInfo($"Server started on internal port {detectedPort}, reconfiguring with published port...");
-            await ContainerRunner.RunCommandAsync("container", "stop", containerId);
-            await ContainerRunner.RunCommandAsync("container", "rm", containerId);
+            await ContainerRunner.RunCommandAsync(runtime.CommandName, "stop", containerId);
+            await ContainerRunner.RunCommandAsync(runtime.CommandName, "rm", containerId);
             
-            // Restart with the now-known port published
-            args.InsertRange(args.IndexOf("-d") + 1, new[] { "-p", $"{detectedPort.Value}:{detectedPort.Value}" });
+            // Rebuild arguments with the now-known port published
+            ports = new Dictionary<string, string>
+            {
+                { detectedPort.Value.ToString(), detectedPort.Value.ToString() }
+            };
+            
+            args = runtime.BuildRunArguments(
+                "copilot-in-container:latest",
+                containerName,
+                envVars,
+                volumes,
+                "/workspace",
+                interactive: false,
+                removeOnExit: false,
+                ports: ports,
+                detached: true
+            );
+            
+            args.Add("copilot");
+            args.Add("--server");
+            args.Add("--log-level");
+            args.Add(logLevel);
             args.Add("--port");
             args.Add(detectedPort.Value.ToString());
             
-            var (restartExitCode, restartOutput) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            var (restartExitCode, restartOutput) = await ContainerRunner.RunCommandAsync(runtime.CommandName, args.ToArray());
             if (restartExitCode != 0)
             {
                 ConsoleUI.PrintError("Failed to restart Copilot server with published port");
@@ -323,11 +369,11 @@ public partial class ServerCommands : ICommand
 
         while (DateTime.UtcNow - start < timeout)
         {
-            // Check if container is still running using container list
-            var (statusCode, statusOutput) = await ContainerRunner.RunCommandAsync(
-                "container", 
-                "list"
-            );
+            // Get runtime
+            var runtime = ContainerRunner.GetRuntime();
+            
+            // Check if container is still running
+            var (statusCode, statusOutput) = runtime.ListContainers();
             
             bool isRunning = false;
             if (statusCode == 0)
@@ -347,13 +393,15 @@ public partial class ServerCommands : ICommand
             {
                 ConsoleUI.PrintError("Container stopped unexpectedly");
                 // Get last logs to show error
-                var (_, errorLogs) = await ContainerRunner.RunCommandAsync("container", "logs", containerId);
+                var logsArgs = runtime.BuildLogsArguments(containerId);
+                var (_, errorLogs) = await ContainerRunner.RunCommandAsync(runtime.CommandName, logsArgs.ToArray());
                 Console.WriteLine("Last logs:");
                 Console.WriteLine(errorLogs);
                 return null;
             }
 
-            var (exitCode, logs) = await ContainerRunner.RunCommandAsync("container", "logs", containerId);
+            var logArgs = runtime.BuildLogsArguments(containerId);
+            var (exitCode, logs) = await ContainerRunner.RunCommandAsync(runtime.CommandName, logArgs.ToArray());
             
             if (exitCode == 0 && !string.IsNullOrEmpty(logs))
             {
@@ -406,7 +454,8 @@ public partial class ServerCommands : ICommand
 
         ConsoleUI.PrintInfo($"Stopping server instance: {instanceName}");
         
-        var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", "stop", state.ContainerId);
+        var runtime = ContainerRunner.GetRuntime();
+        var (exitCode, output) = runtime.StopContainer(state.ContainerId);
         
         if (exitCode != 0)
         {
@@ -513,19 +562,11 @@ public partial class ServerCommands : ICommand
         // Get current directory for workspace context
         var currentDir = Directory.GetCurrentDirectory();
 
-        // Execute copilot CLI to connect to the server
-        var args = new List<string>
-        {
-            "exec"
-        };
+        // Get runtime
+        var runtime = ContainerRunner.GetRuntime();
         
-        // Only add -it for interactive mode
-        if (!noTty)
-        {
-            args.Add("-it");
-        }
-        
-        args.AddRange(new[] { "-w", "/workspace", state.ContainerId, "copilot" });
+        // Build command to run in container
+        var copilotCommand = new List<string> { "copilot" };
 
         // Add prompt if provided
         if (prompt.Length > 0)
@@ -533,21 +574,29 @@ public partial class ServerCommands : ICommand
             if (noTty)
             {
                 // For non-interactive mode, use -p/--prompt flag
-                args.Add("-p");
-                args.Add(string.Join(" ", prompt));
+                copilotCommand.Add("-p");
+                copilotCommand.Add(string.Join(" ", prompt));
             }
             else
             {
                 // For interactive mode, pass arguments directly
-                args.AddRange(prompt);
+                copilotCommand.AddRange(prompt);
             }
         }
+        
+        // Build exec arguments
+        var args = runtime.BuildExecArguments(
+            state.ContainerId,
+            "/workspace",
+            !noTty,
+            copilotCommand.ToArray()
+        );
 
         // Run the command
         if (noTty)
         {
             // For non-interactive mode, capture output
-            var (exitCode, output) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            var (exitCode, output) = await ContainerRunner.RunCommandAsync(runtime.CommandName, args.ToArray());
             
             if (exitCode != 0)
             {
@@ -567,7 +616,7 @@ public partial class ServerCommands : ICommand
             // For interactive mode, run interactively
             var startInfo = new ProcessStartInfo
             {
-                FileName = "container",
+                FileName = runtime.CommandName,
                 UseShellExecute = false
             };
             
@@ -620,27 +669,15 @@ public partial class ServerCommands : ICommand
             return;
         }
 
-        var args = new List<string> { "logs" };
-        
-        if (tail.HasValue)
-        {
-            args.Add("--tail");
-            args.Add(tail.Value.ToString());
-        }
-        
-        if (follow)
-        {
-            args.Add("--follow");
-        }
-        
-        args.Add(state.ContainerId);
+        var runtime = ContainerRunner.GetRuntime();
+        var args = runtime.BuildLogsArguments(state.ContainerId, tail, follow);
 
         if (follow)
         {
             // Run interactively for follow mode
             var startInfo = new ProcessStartInfo
             {
-                FileName = "container",
+                FileName = runtime.CommandName,
                 UseShellExecute = false
             };
             
@@ -656,7 +693,7 @@ public partial class ServerCommands : ICommand
         else
         {
             // Get logs and display
-            var (exitCode, logs) = await ContainerRunner.RunCommandAsync("container", args.ToArray());
+            var (exitCode, logs) = await ContainerRunner.RunCommandAsync(runtime.CommandName, args.ToArray());
             
             if (exitCode != 0)
             {
@@ -670,26 +707,8 @@ public partial class ServerCommands : ICommand
 
     private bool IsContainerRunning(string containerId)
     {
-        // Apple container doesn't support --format flag, use list instead
-        var (exitCode, output) = ContainerRunner.RunCommand(
-            "container", 
-            "list"
-        );
-        
-        if (exitCode != 0) return false;
-        
-        // Check if container ID or name appears in list output with "running" status
-        var lines = output.Split('\n');
-        foreach (var line in lines)
-        {
-            if ((line.Contains(containerId) || line.Contains($"copilot-server-")) && 
-                line.Contains("running", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-        
-        return false;
+        var runtime = ContainerRunner.GetRuntime();
+        return runtime.IsContainerRunning(containerId);
     }
 
     private string GetUptime(DateTime startedAt)
