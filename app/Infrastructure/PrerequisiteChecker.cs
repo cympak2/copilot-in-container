@@ -19,14 +19,19 @@ public static class PrerequisiteChecker
             Console.WriteLine();
             Console.WriteLine("Apple Container:");
             Console.WriteLine("  https://github.com/apple/container/releases");
-            Console.WriteLine("  Required: macOS 15+ with Apple silicon");
+            Console.WriteLine("  Required: macOS 26+ with Apple silicon");
             Console.WriteLine();
             Console.WriteLine("Docker:");
             Console.WriteLine("  https://docs.docker.com/get-docker/");
             Console.WriteLine();
+            Console.WriteLine("Podman:");
+            Console.WriteLine("  https://podman.io/getting-started/installation");
+            Console.WriteLine("  Recommended for Linux systems");
+            Console.WriteLine();
             Console.WriteLine("After installation, you can set your preference:");
             Console.WriteLine("  cic runtime set --runtime docker");
             Console.WriteLine("  cic runtime set --runtime container");
+            Console.WriteLine("  cic runtime set --runtime podman");
             return false;
         }
 

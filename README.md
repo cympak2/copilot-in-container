@@ -1,13 +1,13 @@
 # copilot-in-container: GitHub Copilot CLI in Container
 
-Run the GitHub Copilot CLI in a secure, sandboxed container on macOS and other platforms. This tool provides a lightweight wrapper to run GitHub Copilot CLI in isolation using either Apple Container or Docker.
+Run the GitHub Copilot CLI in a secure, sandboxed container on macOS, Linux and other platforms. This tool provides a lightweight wrapper to run GitHub Copilot CLI in isolation using Apple Container, Podman, or Docker.
 
 ## 🚀 What is this?
 
 This project provides a simple way to run [GitHub Copilot CLI](https://github.com/features/copilot/cli) in a container, giving you:
 
 - **Security**: Isolated environment using container technology
-- **Flexibility**: Support for both Apple Container and Docker
+- **Flexibility**: Support for Apple Container, Podman, and Docker
 - **Clean system**: No global Node.js installation needed
 - **Automatic authentication**: Uses your existing `gh` CLI credentials
 - **File system access**: Only mounts the current directory you're working in
@@ -21,8 +21,13 @@ Before you start, ensure you have:
 
 - **Apple Container** (recommended for Apple Silicon Macs):
   - Mac with Apple silicon
-  - macOS 15 or later
+  - macOS 26 or later
   - [Apple container](https://github.com/apple/container) installed
+  
+- **Podman** (recommended for Linux):
+  - [Podman](https://podman.io/getting-started/installation) installed
+  - Works on Linux, macOS, and Windows
+  - Daemonless container runtime
   
 - **Docker** (cross-platform):
   - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed
@@ -76,6 +81,8 @@ source ~/.zshrc  # or source ~/.bashrc
 cic runtime set --runtime docker
 # or
 cic runtime set --runtime container
+# or
+cic runtime set --runtime podman
 ```
 
 ## 🔧 Runtime Management
@@ -100,6 +107,9 @@ cic runtime set --runtime docker
 
 # Switch to Apple Container
 cic runtime set --runtime container
+
+# Switch to Podman
+cic runtime set --runtime podman
 ```
 
 ## 📖 Usage

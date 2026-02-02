@@ -71,6 +71,7 @@ public class RuntimeCommands : ICommand
         {
             "docker" => new DockerRuntime(),
             "container" => new AppleContainerRuntime(),
+            "podman" => new PodmanRuntime(),
             _ => null!
         };
 
@@ -81,6 +82,7 @@ public class RuntimeCommands : ICommand
             Console.WriteLine("Available runtimes:");
             Console.WriteLine("  - docker");
             Console.WriteLine("  - container");
+            Console.WriteLine("  - podman");
             return;
         }
 
@@ -96,7 +98,12 @@ public class RuntimeCommands : ICommand
             else if (runtime is AppleContainerRuntime)
             {
                 Console.WriteLine("  Apple Container: https://github.com/apple/container/releases");
-                Console.WriteLine("  Requires: macOS 15+");
+                Console.WriteLine("  Requires: macOS 26+");
+            }
+            else if (runtime is PodmanRuntime)
+            {
+                Console.WriteLine("  Podman: https://podman.io/getting-started/installation");
+                Console.WriteLine("  Common on Linux distributions");
             }
             return;
         }
@@ -120,7 +127,8 @@ public class RuntimeCommands : ICommand
         var runtimes = new IContainerRuntime[]
         {
             new AppleContainerRuntime(),
-            new DockerRuntime()
+            new DockerRuntime(),
+            new PodmanRuntime()
         };
 
         foreach (var runtime in runtimes)
@@ -136,6 +144,7 @@ public class RuntimeCommands : ICommand
         Console.WriteLine("To set your preferred runtime:");
         Console.WriteLine("  cic runtime set --runtime docker");
         Console.WriteLine("  cic runtime set --runtime container");
+        Console.WriteLine("  cic runtime set --runtime podman");
         Console.WriteLine();
     }
 }

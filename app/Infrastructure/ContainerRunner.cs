@@ -41,6 +41,7 @@ public static class ContainerRunner
             {
                 "docker" => new DockerRuntime(),
                 "container" => new AppleContainerRuntime(),
+                "podman" => new PodmanRuntime(),
                 _ => null
             };
             
@@ -48,11 +49,18 @@ public static class ContainerRunner
                 return _runtime;
         }
         
-        // Auto-detect: prefer Apple Container on macOS, Docker otherwise
+        // Auto-detect: prefer Apple Container on macOS, then Podman, then Docker
         var appleContainer = new AppleContainerRuntime();
         if (appleContainer.IsAvailable())
         {
             _runtime = appleContainer;
+            return _runtime;
+        }
+        
+        var podman = new PodmanRuntime();
+        if (podman.IsAvailable())
+        {
+            _runtime = podman;
             return _runtime;
         }
         

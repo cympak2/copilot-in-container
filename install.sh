@@ -164,6 +164,7 @@ check_prerequisites() {
     local all_ok=true
     local has_container=false
     local has_docker=false
+    local has_podman=false
     
     # Check for Apple container
     if command -v container >/dev/null 2>&1; then
@@ -171,6 +172,14 @@ check_prerequisites() {
         version=$(container --version 2>&1 | head -n1 || echo "unknown")
         print_success "Apple container: $version"
         has_container=true
+    fi
+    
+    # Check for Podman
+    if command -v podman >/dev/null 2>&1; then
+        local podman_version
+        podman_version=$(podman --version 2>&1 || echo "unknown")
+        print_success "Podman: $podman_version"
+        has_podman=true
     fi
     
     # Check for Docker
@@ -182,11 +191,12 @@ check_prerequisites() {
     fi
     
     # Ensure at least one container runtime is available
-    if [ "$has_container" = false ] && [ "$has_docker" = false ]; then
+    if [ "$has_container" = false ] && [ "$has_podman" = false ] && [ "$has_docker" = false ]; then
         print_error "No container runtime found"
         echo ""
         echo "Install one of the following:"
         echo "  - Apple container: https://github.com/apple/container/releases (macOS 26+)"
+        echo "  - Podman: https://podman.io/getting-started/installation (recommended for Linux)"
         echo "  - Docker: https://docs.docker.com/get-docker/"
         all_ok=false
     fi
@@ -211,43 +221,64 @@ check_prerequisites() {
     fi
     
     # Return available runtimes for later selection
-    echo "$has_container:$has_docker"
+    echo "$has_container:$has_podman:$has_docker"
 }
 
 # Select container runtime
 select_runtime() {
     local has_container="$1"
-    local has_docker="$2"
+    local has_podman="$2"
+    local has_docker="$3"
     
-    # If both are available, ask user
-    if [ "$has_container" = true ] && [ "$has_docker" = true ]; then
+    local available_count=0
+    [ "$has_container" = true ] && available_count=$((available_count + 1))
+    [ "$has_podman" = true ] && available_count=$((available_count + 1))
+    [ "$has_docker" = true ] && available_count=$((available_count + 1))
+    
+    # If multiple runtimes are available, ask user
+    if [ $available_count -gt 1 ]; then
         print_header "Select Container Runtime"
         echo ""
-        echo "Both Apple Container and Docker are available."
+        echo "Multiple container runtimes are available."
         echo "Which one would you like to use?"
         echo ""
-        echo "  1) Apple Container (native macOS runtime)"
-        echo "  2) Docker"
+        
+        local option=1
+        local options=()
+        
+        if [ "$has_container" = true ]; then
+            echo "  $option) Apple Container (native macOS runtime)"
+            options[$option]="container"
+            option=$((option + 1))
+        fi
+        
+        if [ "$has_podman" = true ]; then
+            echo "  $option) Podman (recommended for Linux)"
+            options[$option]="podman"
+            option=$((option + 1))
+        fi
+        
+        if [ "$has_docker" = true ]; then
+            echo "  $option) Docker"
+            options[$option]="docker"
+            option=$((option + 1))
+        fi
+        
         echo ""
         
         while true; do
-            read -p "Enter choice [1-2]: " choice
-            case $choice in
-                1)
-                    echo "container"
-                    return
-                    ;;
-                2)
-                    echo "docker"
-                    return
-                    ;;
-                *)
-                    print_error "Invalid choice. Please enter 1 or 2."
-                    ;;
-            esac
+            read -p "Enter choice [1-$available_count]: " choice
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le $available_count ]; then
+                echo "${options[$choice]}"
+                return
+            else
+                print_error "Invalid choice. Please enter a number between 1 and $available_count."
+            fi
         done
     elif [ "$has_container" = true ]; then
         echo "container"
+    elif [ "$has_podman" = true ]; then
+        echo "podman"
     elif [ "$has_docker" = true ]; then
         echo "docker"
     fi
@@ -280,10 +311,11 @@ main() {
     local runtime_info
     runtime_info=$(check_prerequisites)
     local has_container=$(echo "$runtime_info" | cut -d: -f1)
-    local has_docker=$(echo "$runtime_info" | cut -d: -f2)
+    local has_podman=$(echo "$runtime_info" | cut -d: -f2)
+    local has_docker=$(echo "$runtime_info" | cut -d: -f3)
     
     local selected_runtime
-    selected_runtime=$(select_runtime "$has_container" "$has_docker")
+    selected_runtime=$(select_runtime "$has_container" "$has_podman" "$has_docker")
     
     save_runtime_config "$selected_runtime"
     
@@ -293,10 +325,20 @@ main() {
     print_header "Installation Complete"
     
     local runtime_display
-    if [ "$selected_runtime" = "container" ]; then
-        runtime_display="Apple Container"
-    else
-        runtime_display="Docker"
+    case "$selected_runtime" in
+        "container")
+            runtime_display="Apple Container"
+            ;;
+        "podman")
+            runtime_display="Podman"
+            ;;
+        "docker")
+            runtime_display="Docker"
+            ;;
+        *)
+            runtime_display="$selected_runtime"
+            ;;
+    esac
     fi
     
     echo "Container Runtime: $runtime_display"
@@ -310,14 +352,14 @@ main() {
     echo "   gh auth login"
     echo "   gh auth refresh -h github.com -s copilot,read:packages"
     echo ""
-    echo "3. Build the container image:"
-    echo "   cd $(dirname "$0")"
-    echo "   $selected_runtime build -t copilot-in-container:latest ."
-    echo ""
-    echo "4. Start using copilot-in-container:"
+    echo "3. Start using copilot-in-container:"
     echo "   copilot-in-container"
     echo "   cic"
     echo "   cic \"your prompt here\""
+    echo ""
+    echo "Note: The container image will be automatically pulled from the registry"
+    echo "      on first use. To build locally instead:"
+    echo "      cd $(dirname "$0") && $selected_runtime build -t ghcr.io/cympak2/copilot-in-container:latest ."
     echo ""
     print_success "Installation successful!"
     echo ""
