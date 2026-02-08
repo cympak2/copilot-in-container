@@ -47,16 +47,27 @@ public partial class ServerCommands : ICommand
             description: "Log level for the server",
             getDefaultValue: () => "info"
         );
+        var mcpConfigOption = new Option<string?>(
+            "--mcp-config",
+            description: "Path to MCP config directory (overrides default and global config)"
+        );
+        var noMcpInstallOption = new Option<bool>(
+            "--no-mcp-install",
+            description: "Skip automatic MCP server dependency installation",
+            getDefaultValue: () => false
+        );
         
         startCommand.AddOption(nameOption);
         startCommand.AddOption(portOption);
         startCommand.AddOption(modelOption);
         startCommand.AddOption(logLevelOption);
+        startCommand.AddOption(mcpConfigOption);
+        startCommand.AddOption(noMcpInstallOption);
         
-        startCommand.SetHandler(async (string name, int? port, string? model, string logLevel) =>
+        startCommand.SetHandler(async (string name, int? port, string? model, string logLevel, string? mcpConfig, bool noMcpInstall) =>
         {
-            await StartServerAsync(name, port, model, logLevel);
-        }, nameOption, portOption, modelOption, logLevelOption);
+            await StartServerAsync(name, port, model, logLevel, mcpConfig, !noMcpInstall);
+        }, nameOption, portOption, modelOption, logLevelOption, mcpConfigOption, noMcpInstallOption);
 
         // Stop server command
         var stopCommand = new Command("stop", "Stop a running Copilot server instance");
@@ -150,7 +161,7 @@ public partial class ServerCommands : ICommand
         rootCommand.AddCommand(serverCommand);
     }
 
-    private async Task StartServerAsync(string instanceName, int? port, string? model, string logLevel)
+    private async Task StartServerAsync(string instanceName, int? port, string? model, string logLevel, string? mcpConfigOverride = null, bool installMcpDeps = true)
     {
         var stateFile = GetServerStateFile(instanceName);
         
@@ -216,6 +227,27 @@ public partial class ServerCommands : ICommand
             { currentDir, "/workspace:rw" },
             { configDir, "/home/appuser/.copilot:rw" }
         };
+
+        // Handle MCP configuration
+        var mcpConfigPath = McpCommands.GetEffectiveMcpConfigPath(mcpConfigOverride);
+        string? mcpContainerPath = null;
+
+        if (mcpConfigPath != null)
+        {
+            var mcpConfigDir = Path.GetDirectoryName(mcpConfigPath)!;
+            
+            // Mount MCP config directory to container
+            mcpContainerPath = "/mcp/readonly";
+            volumes.Add(mcpConfigDir, $"{mcpContainerPath}:ro");
+            
+            ConsoleUI.PrintInfo($"MCP config: {mcpConfigPath}");
+            
+            // Handle MCP server dependency installation
+            if (installMcpDeps)
+            {
+                await ContainerRunner.InstallMcpDependencies(runtime, mcpConfigPath, volumes, envVars, containerName);
+            }
+        }
         
         // Build ports if specified
         Dictionary<string, string>? ports = null;
@@ -251,6 +283,13 @@ public partial class ServerCommands : ICommand
         {
             args.Add("--port");
             args.Add(port.Value.ToString());
+        }
+
+        // Add MCP config if available
+        if (mcpContainerPath != null)
+        {
+            args.Add("--additional-mcp-config");
+            args.Add($"{mcpContainerPath}/mcp-config.json");
         }
 
         // Start container
@@ -318,6 +357,13 @@ public partial class ServerCommands : ICommand
             args.Add("--port");
             args.Add(detectedPort.Value.ToString());
             
+            // Add MCP config if available
+            if (mcpContainerPath != null)
+            {
+                args.Add("--additional-mcp-config");
+                args.Add($"{mcpContainerPath}/mcp-config.json");
+            }
+            
             var (restartExitCode, restartOutput) = await ContainerRunner.RunCommandAsync(runtime.CommandName, args.ToArray());
             if (restartExitCode != 0)
             {
@@ -343,7 +389,8 @@ public partial class ServerCommands : ICommand
             Model = model,
             LogLevel = logLevel,
             StartedAt = DateTime.UtcNow,
-            WorkspaceFolder = currentDir
+            WorkspaceFolder = currentDir,
+            McpConfigPath = mcpConfigPath
         };
 
         await SaveServerStateAsync(state);
@@ -766,4 +813,5 @@ internal class ServerState
     public string LogLevel { get; set; } = "info";
     public DateTime StartedAt { get; set; }
     public string WorkspaceFolder { get; set; } = "";
+    public string? McpConfigPath { get; set; }
 }

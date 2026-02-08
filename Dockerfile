@@ -4,12 +4,15 @@ FROM node:20-slim
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies including gosu for user switching
+# Install system dependencies including gosu for user switching and Python for MCP servers
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
     gosu \
+    python3 \
+    python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # ARG for the Copilot CLI version - passed from build process

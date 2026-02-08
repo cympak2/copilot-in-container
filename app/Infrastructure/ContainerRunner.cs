@@ -15,13 +15,6 @@ public static class ContainerRunner
         "gh-copilot"
     );
     
-    private static readonly string RuntimeConfigPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".config",
-        "copilot-in-container",
-        "runtime"
-    );
-    
     private static IContainerRuntime? _runtime;
     
     /// <summary>
@@ -33,7 +26,7 @@ public static class ContainerRunner
             return _runtime;
             
         // Try to load from config
-        var configuredRuntime = ConfigFile.ReadValue(RuntimeConfigPath);
+        var configuredRuntime = GlobalConfig.GetRuntime();
         
         if (!string.IsNullOrEmpty(configuredRuntime))
         {
@@ -81,7 +74,7 @@ public static class ContainerRunner
     /// </summary>
     public static void SetRuntime(string runtimeName)
     {
-        ConfigFile.WriteValue(RuntimeConfigPath, runtimeName);
+        GlobalConfig.SetRuntime(runtimeName);
         _runtime = null; // Force reload
     }
 
@@ -126,7 +119,7 @@ public static class ContainerRunner
         return true;
     }
 
-    public static async Task<int> RunAsync(string[] promptArgs, string? sessionModel = null, string? agent = null)
+    public static async Task<int> RunAsync(string[] promptArgs, string? sessionModel = null, string? agent = null, string? mcpConfigOverride = null, bool installMcpDeps = true)
     {
         var runtime = GetRuntime();
         
@@ -165,6 +158,41 @@ public static class ContainerRunner
             { currentDir, "/workspace:rw" },
             { ConfigDir, "/home/appuser/.copilot:rw" }
         };
+
+        // Handle MCP configuration
+        var mcpConfigPath = Commands.McpCommands.GetEffectiveMcpConfigPath(mcpConfigOverride);
+        string? mcpContainerPath = null;
+
+        if (mcpConfigPath != null)
+        {
+            var mcpConfigDir = Path.GetDirectoryName(mcpConfigPath)!;
+            
+            // Mount MCP config directory to container
+            mcpContainerPath = "/mcp/readonly";
+            volumes.Add(mcpConfigDir, $"{mcpContainerPath}:ro");
+            
+            ConsoleUI.PrintInfo($"MCP config: {mcpConfigPath}");
+            
+            // Handle MCP server dependency installation
+            if (installMcpDeps)
+            {
+                await InstallMcpDependencies(runtime, mcpConfigPath, volumes, envVars, containerName);
+            }
+        }
+        else
+        {
+            // Check if user has MCP config in default location but didn't set it up
+            var defaultUserMcpConfig = Path.Combine(ConfigDir, "mcp-config.json");
+            if (File.Exists(defaultUserMcpConfig) && mcpConfigOverride == null)
+            {
+                ConsoleUI.PrintWarning("MCP config found at ~/.copilot/mcp-config.json but not in repository");
+                Console.WriteLine("To use MCP servers, either:");
+                Console.WriteLine("  1. Initialize local config: cic mcp init");
+                Console.WriteLine("  2. Set global path: cic mcp set-path ~/.copilot");
+                Console.WriteLine("  3. Use CLI option: cic --mcp-config ~/.copilot");
+                Console.WriteLine();
+            }
+        }
 
         // Build container arguments
         var args = runtime.BuildRunArguments(
@@ -220,6 +248,18 @@ public static class ContainerRunner
                 Console.WriteLine($"🤖 Using model (configured): {modelToUse}");
         }
 
+        // Add MCP config if available
+        if (mcpContainerPath != null)
+        {
+            if (!copilotAdded)
+            {
+                args.Add("copilot");
+                copilotAdded = true;
+            }
+            args.Add("--additional-mcp-config");
+            args.Add($"{mcpContainerPath}/mcp-config.json");
+        }
+
         // Run the container
         Console.WriteLine("🚀 Starting GitHub Copilot CLI...");
         Console.WriteLine();
@@ -237,6 +277,129 @@ public static class ContainerRunner
     {
         var (exitCode, output) = RunCommand("id", "-g");
         return (exitCode == 0 && int.TryParse(output, out var id)) ? id.ToString() : "1000";
+    }
+
+    /// <summary>
+    /// Installs dependencies for MCP servers by detecting package.json or Python dependency files.
+    /// </summary>
+    public static async Task InstallMcpDependencies(
+        IContainerRuntime runtime, 
+        string mcpConfigPath, 
+        Dictionary<string, string> volumes, 
+        Dictionary<string, string> envVars, 
+        string containerName)
+    {
+        var config = McpConfig.LoadFromFile(mcpConfigPath);
+        if (config?.McpServers == null || config.McpServers.Count == 0)
+            return;
+
+        var mcpConfigDir = Path.GetDirectoryName(mcpConfigPath)!;
+        var serverDirs = config.GetServerDirectories();
+
+        if (serverDirs.Count == 0)
+            return;
+
+        ConsoleUI.PrintInfo("Checking MCP server dependencies...");
+
+        foreach (var relativeDir in serverDirs)
+        {
+            // Convert relative path to absolute, relative to MCP config directory
+            var serverDir = Path.IsPathRooted(relativeDir) 
+                ? relativeDir 
+                : Path.GetFullPath(Path.Combine(mcpConfigDir, relativeDir));
+
+            if (!Directory.Exists(serverDir))
+            {
+                ConsoleUI.PrintWarning($"MCP server directory not found: {serverDir}");
+                continue;
+            }
+
+            // Check for Node.js dependencies
+            var packageJsonPath = Path.Combine(serverDir, "package.json");
+            var hasNodeDeps = File.Exists(packageJsonPath);
+
+            // Check for Python dependencies
+            var requirementsPath = Path.Combine(serverDir, "requirements.txt");
+            var pyprojectPath = Path.Combine(serverDir, "pyproject.toml");
+            var hasPythonDeps = File.Exists(requirementsPath) || File.Exists(pyprojectPath);
+
+            if (!hasNodeDeps && !hasPythonDeps)
+                continue;
+
+            var containerServerPath = $"/mcp/servers/{Path.GetFileName(serverDir)}";
+            
+            // Temporarily add this directory to volumes for installation
+            var volumeKey = serverDir;
+            if (!volumes.ContainsKey(volumeKey))
+            {
+                volumes.Add(volumeKey, $"{containerServerPath}:rw");
+            }
+
+            if (hasNodeDeps)
+            {
+                Console.WriteLine($"  📦 Installing Node.js dependencies in {Path.GetFileName(serverDir)}...");
+                await RunDependencyInstall(runtime, envVars, containerName, containerServerPath, "npm", "install");
+            }
+
+            if (hasPythonDeps)
+            {
+                Console.WriteLine($"  🐍 Installing Python dependencies in {Path.GetFileName(serverDir)}...");
+                
+                if (File.Exists(requirementsPath))
+                {
+                    await RunDependencyInstall(runtime, envVars, containerName, containerServerPath, "pip", "install", "-r", "requirements.txt");
+                }
+                else if (File.Exists(pyprojectPath))
+                {
+                    await RunDependencyInstall(runtime, envVars, containerName, containerServerPath, "pip", "install", "-e", ".");
+                }
+            }
+        }
+
+        Console.WriteLine();
+    }
+
+    private static async Task RunDependencyInstall(
+        IContainerRuntime runtime,
+        Dictionary<string, string> envVars,
+        string containerName,
+        string workDir,
+        string command,
+        params string[] args)
+    {
+        var installEnvVars = new Dictionary<string, string>(envVars);
+        var installVolumes = new Dictionary<string, string>();
+        
+        // We'll use a simple run command for installation
+        var installArgs = new List<string>
+        {
+            "run",
+            "--rm",
+            "-w", workDir
+        };
+
+        // Add environment variables
+        foreach (var (key, value) in installEnvVars)
+        {
+            installArgs.Add("-e");
+            installArgs.Add($"{key}={value}");
+        }
+
+        // Add the image and command
+        installArgs.Add(ImageName);
+        installArgs.Add(command);
+        installArgs.AddRange(args);
+
+        var (exitCode, output) = await RunCommandAsync(runtime.CommandName, installArgs.ToArray());
+        
+        if (exitCode != 0)
+        {
+            ConsoleUI.PrintWarning($"Dependency installation failed (continuing anyway)");
+            if (!string.IsNullOrWhiteSpace(output))
+            {
+                Console.WriteLine($"    Error: {output.Split('\n').FirstOrDefault()}");
+            }
+        }
     }
 
     public static (int exitCode, string output) RunCommand(string fileName, params string[] arguments)

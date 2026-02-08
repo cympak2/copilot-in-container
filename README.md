@@ -168,9 +168,111 @@ cic server stop --name dev
 - **Persistent state**: Conversation context maintained across connections
 - **Background operation**: Server runs independently of your shell session
 
+### MCP (Model Context Protocol) Support
+
+GitHub Copilot CLI supports MCP servers to extend functionality with custom tools and data sources. This tool provides seamless MCP integration with automatic dependency installation.
+
+#### MCP Configuration Locations
+
+MCP servers are configured via `mcp-config.json`. The tool checks for this file in the following order:
+
+1. **CLI override**: `--mcp-config /path/to/config/dir`
+2. **Global config**: Set via `cic mcp set-path /path/to/config/dir`
+3. **Local default**: `.copilot-in-container/mcp/mcp-config.json` (in your repository)
+
+#### Quick Start with MCP
+
+Initialize MCP in your repository:
+```bash
+# Create sample MCP config in your repository
+cic mcp init
+
+# Edit .copilot-in-container/mcp/mcp-config.json to add your MCP servers
+```
+
+Or use a global MCP configuration:
+```bash
+# Set global MCP config directory (e.g., ~/.copilot)
+cic mcp set-path ~/.copilot
+
+# Or use CLI override for a single session
+cic --mcp-config ~/.copilot
+```
+
+#### Managing MCP Configuration
+
+```bash
+# Show current MCP configuration
+cic mcp show
+
+# Set global MCP config directory
+cic mcp set-path /path/to/mcp/config
+
+# Clear global MCP config
+cic mcp clear-path
+
+# Initialize local MCP directory with sample config
+cic mcp init
+```
+
+#### MCP with Server Mode
+
+MCP servers work seamlessly in server mode:
+
+```bash
+# Start server with MCP support (uses default or global config)
+cic server start --name dev
+
+# Start server with custom MCP config
+cic server start --name dev --mcp-config ~/.copilot
+
+# Skip MCP dependency installation
+cic server start --name dev --no-mcp-install
+```
+
+#### Automatic Dependency Installation
+
+The tool automatically installs dependencies for your MCP servers:
+
+- **Node.js servers**: Detects `package.json` and runs `npm install`
+- **Python servers**: Detects `requirements.txt` or `pyproject.toml` and runs `pip install`
+
+To skip automatic installation:
+```bash
+cic --no-mcp-install
+```
+
+#### Example MCP Config
+
+```json
+{
+  "mcpServers": {
+    "my-node-server": {
+      "command": "node",
+      "args": ["server/index.js"],
+      "cwd": "mcp-servers/my-server",
+      "env": {
+        "API_KEY": "your-api-key"
+      }
+    },
+    "my-python-server": {
+      "command": "python3",
+      "args": ["-m", "my_mcp_server"],
+      "cwd": "mcp-servers/python-server"
+    }
+  }
+}
+```
+
+**Note**: The `cwd` paths are relative to the directory containing `mcp-config.json`.
+
+Learn more about MCP: [GitHub Copilot MCP Documentation](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/extend-coding-agent-with-mcp)
+
 ### Options
 
 - `--no-pull` - Skip pulling the latest image
+- `--mcp-config <path>` - Path to MCP config directory (overrides default and global config)
+- `--no-mcp-install` - Skip automatic MCP server dependency installation
 - `--help` - Show help message
 - `-h` - Show help message
 

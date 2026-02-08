@@ -189,9 +189,80 @@ cic server stop --name myproject
 - 🎯 **Multiple projects**: Run separate servers for different codebases
 - 🌐 **Background**: Server runs independently of your shell
 
+## MCP (Model Context Protocol) Setup
+
+MCP servers extend Copilot CLI with custom tools and data sources.
+
+### Quick MCP Setup
+
+```bash
+# Initialize MCP in your repository
+cic mcp init
+
+# Edit the generated config
+nano .copilot-in-container/mcp/mcp-config.json
+```
+
+This creates a sample `mcp-config.json` in `.copilot-in-container/mcp/`.
+
+### Example MCP Config
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "node",
+      "args": ["mcp-server-filesystem/dist/index.js"],
+      "cwd": "mcp-servers/filesystem"
+    },
+    "github": {
+      "command": "python3",
+      "args": ["-m", "mcp_server_github"],
+      "cwd": "mcp-servers/github",
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### Using MCP
+
+```bash
+# Use with default/local config
+cic
+
+# Use with custom config directory
+cic --mcp-config ~/.copilot
+
+# Start server with MCP
+cic server start --name dev
+
+# Skip automatic dependency installation
+cic --no-mcp-install
+```
+
+### Managing MCP Config
+
+```bash
+# Show current MCP configuration
+cic mcp show
+
+# Set global MCP config directory
+cic mcp set-path ~/.copilot
+
+# Clear global config
+cic mcp clear-path
+```
+
+**Note**: Dependencies (`package.json`, `requirements.txt`) are automatically installed before starting Copilot CLI.
+
 ## Options
 
 - `--no-pull` - Skip pulling the latest image (faster startup)
+- `--mcp-config <path>` - Path to MCP config directory
+- `--no-mcp-install` - Skip automatic dependency installation
 - `--help` - Show help message
 
 ## Troubleshooting

@@ -29,6 +29,10 @@ class Program
         var runtimeCommands = new RuntimeCommands();
         runtimeCommands.Configure(rootCommand);
 
+        // Register MCP management commands
+        var mcpCommands = new McpCommands();
+        mcpCommands.Configure(rootCommand);
+
         var noPullOption = new Option<bool>(
             "--no-pull",
             "Skip pulling the latest image"
@@ -44,6 +48,16 @@ class Program
             "GitHub Copilot agent to use (e.g., refactor-agent, test-agent)"
         );
 
+        var mcpConfigOption = new Option<string?>(
+            "--mcp-config",
+            "Path to MCP config directory (overrides default and global config)"
+        );
+
+        var noMcpInstallOption = new Option<bool>(
+            "--no-mcp-install",
+            "Skip automatic MCP server dependency installation"
+        );
+
         var promptArgument = new Argument<string[]>(
             "prompt",
             "Prompt to send to GitHub Copilot CLI"
@@ -53,17 +67,19 @@ class Program
         rootCommand.AddOption(noPullOption);
         rootCommand.AddOption(modelOption);
         rootCommand.AddOption(agentOption);
+        rootCommand.AddOption(mcpConfigOption);
+        rootCommand.AddOption(noMcpInstallOption);
         rootCommand.AddArgument(promptArgument);
 
-        rootCommand.SetHandler(async (bool noPull, string? model, string? agent, string[] prompt) =>
+        rootCommand.SetHandler(async (bool noPull, string? model, string? agent, string? mcpConfig, bool noMcpInstall, string[] prompt) =>
         {
-            await RunContainer(noPull, model, agent, prompt);
-        }, noPullOption, modelOption, agentOption, promptArgument);
+            await RunContainer(noPull, model, agent, mcpConfig, noMcpInstall, prompt);
+        }, noPullOption, modelOption, agentOption, mcpConfigOption, noMcpInstallOption, promptArgument);
 
         return await rootCommand.InvokeAsync(args);
     }
 
-    static async Task<int> RunContainer(bool skipPull, string? sessionModel, string? agent, string[] promptArgs)
+    static async Task<int> RunContainer(bool skipPull, string? sessionModel, string? agent, string? mcpConfig, bool noMcpInstall, string[] promptArgs)
     {
         ConsoleUI.PrintInfo("Checking prerequisites...");
         Console.WriteLine();
@@ -96,6 +112,6 @@ class Program
         }
 
         // Run the container
-        return await ContainerRunner.RunAsync(promptArgs, sessionModel, agent);
+        return await ContainerRunner.RunAsync(promptArgs, sessionModel, agent, mcpConfig, !noMcpInstall);
     }
 }
