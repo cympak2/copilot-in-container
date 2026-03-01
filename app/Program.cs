@@ -33,6 +33,10 @@ class Program
         var mcpCommands = new McpCommands();
         mcpCommands.Configure(rootCommand);
 
+        // Register HTTP server mode commands
+        var httpServerCommands = new HttpServerCommands();
+        httpServerCommands.Configure(rootCommand);
+
         var noPullOption = new Option<bool>(
             "--no-pull",
             "Skip pulling the latest image"
