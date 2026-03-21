@@ -153,6 +153,10 @@ public class DockerRuntime : IContainerRuntime
         if (interactive)
             args.Add("-it");
 
+        // Run as appuser to match the container's main process
+        args.Add("--user");
+        args.Add("appuser");
+
         args.Add("-w");
         args.Add(workingDirectory);
         

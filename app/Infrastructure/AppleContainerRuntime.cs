@@ -146,6 +146,11 @@ public class AppleContainerRuntime : IContainerRuntime
         if (interactive)
             args.Add("-it");
 
+        // Run as appuser to match the container's main process
+        // Apple container uses -u instead of --user
+        args.Add("-u");
+        args.Add("appuser");
+
         args.Add("-w");
         args.Add(workingDirectory);
         

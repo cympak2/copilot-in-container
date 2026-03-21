@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using System.Text.Json;
 using CopilotInContainer.Commands;
+using GitHub.Copilot.SDK;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -252,24 +252,7 @@ public static class HttpServerRunner
             ctx.Response.Headers["X-Accel-Buffering"] = "no";
             await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
 
-            // Build `container exec` arguments (non-interactive, with prompt flag)
-            var copilotArgs = new[] { "copilot", "-p", req.Prompt };
-            var execArgs    = runtime.BuildExecArguments(
-                state.ContainerId, "/workspace", interactive: false, copilotArgs);
-
-            var psi = new ProcessStartInfo
-            {
-                FileName               = runtime.CommandName,
-                UseShellExecute        = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                CreateNoWindow         = true
-            };
-            foreach (var a in execArgs) psi.ArgumentList.Add(a);
-
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-
-            // Helpers that write one SSE "data:" frame
+            // Helper that writes one SSE "data:" frame
             async Task WriteSse<T>(T payload, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
             {
                 var json    = JsonSerializer.Serialize(payload, typeInfo);
@@ -278,33 +261,51 @@ public static class HttpServerRunner
                 await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
             }
 
-            process.OutputDataReceived += async (_, e) =>
-            {
-                if (e.Data is null) return;
-                try { await WriteSse(new SseOutputLine(e.Data, "stdout"), HttpServerJsonContext.Default.SseOutputLine); }
-                catch (OperationCanceledException) { }
-            };
-
-            process.ErrorDataReceived += async (_, e) =>
-            {
-                if (e.Data is null) return;
-                try { await WriteSse(new SseOutputLine(e.Data, "stderr"), HttpServerJsonContext.Default.SseOutputLine); }
-                catch (OperationCanceledException) { }
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            await process.WaitForExitAsync(ctx.RequestAborted);
-
-            // Final "done" event so the client knows the command finished
             try
             {
-                await WriteSse(new SseDoneEvent("done", process.ExitCode),
+                var options = new CopilotClientOptions
+                {
+                    CliUrl = $"localhost:{state.Port}",
+                    UseStdio = false
+                };
+
+                await using var client = new CopilotClient(options);
+                await using var session = await client.CreateSessionAsync(new SessionConfig
+                {
+                    Model = state.Model ?? "gpt-5.4",
+                    OnPermissionRequest = PermissionHandler.ApproveAll
+                });
+
+                var response = await session.SendAndWaitAsync(new MessageOptions
+                {
+                    Prompt = req.Prompt
+                });
+
+                var content = response?.Data?.Content;
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    foreach (var line in content.Split('\n', StringSplitOptions.None))
+                    {
+                        await WriteSse(new SseOutputLine(line, "stdout"), HttpServerJsonContext.Default.SseOutputLine);
+                    }
+                }
+
+                await WriteSse(new SseDoneEvent("done", 0),
                     HttpServerJsonContext.Default.SseDoneEvent);
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                if (!string.IsNullOrWhiteSpace(ex.Message))
+                {
+                    await WriteSse(new SseOutputLine(ex.Message, "stderr"), HttpServerJsonContext.Default.SseOutputLine);
+                }
+
+                await WriteSse(new SseDoneEvent("done", 1),
+                    HttpServerJsonContext.Default.SseDoneEvent);
+            }
         });
 
         // ── Start ──────────────────────────────────────────────────────────────
