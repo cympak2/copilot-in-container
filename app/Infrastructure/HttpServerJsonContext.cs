@@ -42,6 +42,14 @@ public record ServerStatusResponse(
     string  WorkspaceFolder,
     string? Uptime);
 
+// GET /api/servers/{name}/agents
+public record ServerAgentsResponse(List<ServerAgentInfo> Agents);
+
+public record ServerAgentInfo(
+    string Name,
+    string FileName,
+    string? Description);
+
 // GET /api/servers/{name}/logs
 public record ServerLogsResponse(string Logs);
 
@@ -65,6 +73,9 @@ public record SseDoneEvent(string EventType, int ExitCode); // EventType = "done
 [JsonSerializable(typeof(List<ServerInstanceInfo>))]
 [JsonSerializable(typeof(ServerInstanceInfo))]
 [JsonSerializable(typeof(ServerStatusResponse))]
+[JsonSerializable(typeof(ServerAgentsResponse))]
+[JsonSerializable(typeof(List<ServerAgentInfo>))]
+[JsonSerializable(typeof(ServerAgentInfo))]
 [JsonSerializable(typeof(ServerLogsResponse))]
 [JsonSerializable(typeof(ExecuteRequest))]
 [JsonSerializable(typeof(SseOutputLine))]

@@ -84,6 +84,37 @@ Detailed status for a single named server instance.
 
 ---
 
+### `GET /api/servers/{name}/agents`
+List the custom GitHub Copilot agents available for the selected instance.
+Agents are discovered from the instance workspace at `.github/agents`.
+
+**Path param** — `name`: instance name (e.g. `myproject`)
+
+**Response** `200`
+```json
+{
+  "agents": [
+    {
+      "name": "refactor-agent",
+      "fileName": "refactor-agent.md",
+      "description": "Refactor code for readability and consistency"
+    }
+  ]
+}
+```
+
+If the instance exists but the workspace has no `.github/agents` directory, or it contains no supported agent files, the response is:
+
+```json
+{ "agents": [] }
+```
+
+Supported agent file formats: `.md`, `.yml`, `.yaml`, `.json`
+
+**Response** `404` — instance state file not found.
+
+---
+
 ### `GET /api/servers/{name}/logs?tail=N`
 Fetch container logs for the named server.
 

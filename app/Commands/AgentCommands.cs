@@ -22,7 +22,7 @@ public class AgentCommands : ICommand
         command.SetHandler(() =>
         {
             var currentDir = Directory.GetCurrentDirectory();
-            var agentsPath = Path.Combine(currentDir, AgentsDirectory);
+            var agentsPath = AgentDiscovery.GetAgentsDirectoryPath(currentDir);
 
             Console.WriteLine("🤖 GitHub Copilot Agents:");
             Console.WriteLine();
@@ -38,18 +38,9 @@ public class AgentCommands : ICommand
                 Console.WriteLine("Learn more: https://github.com/features/copilot");
                 return;
             }
+            var agents = AgentDiscovery.FindAgentsInWorkspace(currentDir);
 
-            // Find all agent files (commonly .md or .yml files in .github/agents)
-            var agentFiles = Directory.GetFiles(agentsPath, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(f => 
-                {
-                    var ext = Path.GetExtension(f).ToLowerInvariant();
-                    return ext == ".md" || ext == ".yml" || ext == ".yaml" || ext == ".json";
-                })
-                .OrderBy(f => Path.GetFileName(f))
-                .ToList();
-
-            if (agentFiles.Count == 0)
+            if (agents.Count == 0)
             {
                 ConsoleUI.PrintWarning($"No agent files found in {AgentsDirectory}");
                 Console.WriteLine();
@@ -57,37 +48,20 @@ public class AgentCommands : ICommand
                 return;
             }
 
-            Console.WriteLine($"Found {agentFiles.Count} agent(s) in {AgentsDirectory}:");
+            Console.WriteLine($"Found {agents.Count} agent(s) in {AgentsDirectory}:");
             Console.WriteLine();
 
-            foreach (var agentFile in agentFiles)
+            foreach (var agent in agents)
             {
-                var fileName = Path.GetFileName(agentFile);
-                var fileNameWithoutExt = Path.GetFileNameWithoutExtension(agentFile);
-                var fileSize = new FileInfo(agentFile).Length;
-                var sizeStr = FormatFileSize(fileSize);
+                var sizeStr = AgentDiscovery.FormatFileSize(agent.FileSizeBytes);
 
-                Console.WriteLine($"  • {fileName}");
-                Console.WriteLine($"    Agent name: {fileNameWithoutExt}");
+                Console.WriteLine($"  • {agent.FileName}");
+                Console.WriteLine($"    Agent name: {agent.Name}");
                 Console.WriteLine($"    Size: {sizeStr}");
 
-                // Try to read first line for description
-                try
+                if (!string.IsNullOrEmpty(agent.Description))
                 {
-                    var firstLine = File.ReadLines(agentFile).FirstOrDefault()?.Trim();
-                    if (!string.IsNullOrEmpty(firstLine))
-                    {
-                        // Remove markdown comment markers if present
-                        if (firstLine.StartsWith("#"))
-                            firstLine = firstLine.TrimStart('#').Trim();
-                        if (firstLine.Length > 60)
-                            firstLine = firstLine.Substring(0, 57) + "...";
-                        Console.WriteLine($"    Description: {firstLine}");
-                    }
-                }
-                catch
-                {
-                    // Ignore errors reading file
+                    Console.WriteLine($"    Description: {agent.Description}");
                 }
 
                 Console.WriteLine();
@@ -98,19 +72,9 @@ public class AgentCommands : ICommand
             Console.WriteLine($"   cic --agent=<agent-name> \"Your prompt\"");
             Console.WriteLine();
             Console.WriteLine("Example:");
-            Console.WriteLine($"   cic --agent={Path.GetFileNameWithoutExtension(agentFiles[0])} \"Refactor this code\"");
+            Console.WriteLine($"   cic --agent={agents[0].Name} \"Refactor this code\"");
         });
 
         return command;
-    }
-
-    private static string FormatFileSize(long bytes)
-    {
-        if (bytes < 1024)
-            return $"{bytes} B";
-        else if (bytes < 1024 * 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        else
-            return $"{bytes / (1024.0 * 1024.0):F1} MB";
     }
 }

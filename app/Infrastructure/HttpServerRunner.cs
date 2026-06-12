@@ -95,6 +95,25 @@ public static class HttpServerRunner
                 HttpServerJsonContext.Default.ServerStatusResponse);
         });
 
+        // GET /api/servers/{name}/agents
+        app.MapGet("/api/servers/{name}/agents", async (string name) =>
+        {
+            var state = await LoadStateAsync(name);
+            if (state is null)
+                return Results.Json(new ErrorResponse($"Server instance '{name}' not found"),
+                    HttpServerJsonContext.Default.ErrorResponse, statusCode: 404);
+
+            var agents = AgentDiscovery.FindAgentsInWorkspace(state.WorkspaceFolder)
+                .Select(agent => new ServerAgentInfo(
+                    Name: agent.Name,
+                    FileName: agent.FileName,
+                    Description: agent.Description))
+                .ToList();
+
+            return Results.Json(new ServerAgentsResponse(agents),
+                HttpServerJsonContext.Default.ServerAgentsResponse);
+        });
+
         // GET /api/servers/{name}/logs?tail=N
         app.MapGet("/api/servers/{name}/logs", async (string name, int? tail) =>
         {
@@ -389,6 +408,7 @@ public static class HttpServerRunner
         Console.WriteLine("  GET  /health");
         Console.WriteLine("  GET  /api/servers");
         Console.WriteLine("  GET  /api/servers/{name}/status");
+        Console.WriteLine("  GET  /api/servers/{name}/agents");
         Console.WriteLine("  GET  /api/servers/{name}/logs?tail=N");
         Console.WriteLine("  POST /api/servers/{name}/start");
         Console.WriteLine("  POST /api/servers/{name}/stop");
